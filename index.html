@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="id" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Saku — Asisten Kuliah AI</title>
+  <meta name="description" content="Asisten AI untuk mahasiswa: chat cerdas, pencatat tugas & jadwal kuliah, dan pengingat deadline. Gratis, offline-ready, bisa dipasang di HP.">
+  <meta name="theme-color" content="#f6f7f9">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" type="image/png" sizes="32x32" href="icons/icon-32.png">
+  <link rel="apple-touch-icon" href="icons/icon-180.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Saku">
+  <link rel="stylesheet" href="styles/app.css">
+</head>
+<body>
+  <div id="offline" hidden>📡 Kamu sedang offline — AI butuh internet, sisanya tetap jalan.</div>
+  <main id="view" class="view"></main>
+  <nav id="nav" aria-label="Navigasi utama"></nav>
+  <noscript><div style="padding:2rem;text-align:center;font-family:sans-serif">Saku butuh JavaScript untuk berjalan. Aktifkan JavaScript lalu muat ulang ya.</div></noscript>
+
+  <script src="js/util.js"></script>
+  <script src="js/store.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/ai.js"></script>
+  <script src="js/actions.js"></script>
+  <script src="js/views/home.js"></script>
+  <script src="js/views/tasks.js"></script>
+  <script src="js/views/schedule.js"></script>
+  <script src="js/views/chat.js"></script>
+  <script src="js/views/settings.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
