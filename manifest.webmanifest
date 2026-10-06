@@ -1,0 +1,23 @@
+{
+  "name": "Saku — Asisten Kuliah AI",
+  "short_name": "Saku",
+  "description": "Asisten AI untuk mahasiswa: chat cerdas, pencatat tugas & jadwal kuliah, dan pengingat deadline.",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f6f7f9",
+  "theme_color": "#4f46e5",
+  "lang": "id",
+  "categories": ["education", "productivity"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Tanya Saku", "short_name": "Asisten", "url": "./#/asisten", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Tugas", "short_name": "Tugas", "url": "./#/tugas", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] }
+  ]
+}
