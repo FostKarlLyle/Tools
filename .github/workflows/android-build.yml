@@ -19,7 +19,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   apk:
@@ -49,3 +49,21 @@ jobs:
           name: saku-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 30
+
+      - name: Rename APK
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk saku-android.apk
+
+      - name: Rilis ke GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Saku APK #${{ github.run_number }}
+          body: |
+            📱 **Cara install:** unduh `saku-android.apk` di bawah → buka di HP → izinkan "install dari sumber tidak dikenal" → install.
+
+            🔁 **Update:** kalau sudah pernah install versi bertanda tangan tetap, cukup timpa saja (data tidak hilang). Kalau baru pertama: install biasa.
+
+            🫧 Aktifkan bubble maskot: buka Saku → Pengaturan → Bubble Maskot.
+          files: saku-android.apk
+          prerelease: true
+          make_latest: true
