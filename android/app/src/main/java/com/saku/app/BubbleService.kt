@@ -21,6 +21,7 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.view.Gravity
 import android.view.MotionEvent
+import android.view.View
 import android.view.WindowManager
 import android.view.animation.AccelerateDecelerateInterpolator
 import android.widget.FrameLayout
@@ -246,7 +247,7 @@ class BubbleService : Service() {
     }
 
     /** Menempel ke tepi layar terdekat, lalu efek "mendarat" (sedikit gepeng). */
-    private fun snapToEdge(v: FrameLayout) {
+    private fun snapToEdge(v: View) {
         val params = lp ?: return
         val screenW = resources.displayMetrics.widthPixels
         val targetX = if (params.x + sizePx / 2 < screenW / 2) 0 else screenW - sizePx
@@ -266,7 +267,7 @@ class BubbleService : Service() {
         }
     }
 
-    private fun land(v: FrameLayout) {
+    private fun land(v: View) {
         ValueAnimator.ofFloat(0f, 1f).apply {
             duration = 300
             addUpdateListener { a ->
