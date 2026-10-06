@@ -5,7 +5,7 @@ name: Build Android APK
 on:
   push:
     branches:
-      - arena/a4c77440-tools
+      - arena/27a0b54d-tools
     paths:
       - 'android/**'
       - '.github/workflows/android-build.yml'
