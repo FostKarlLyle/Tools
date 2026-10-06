@@ -33,10 +33,10 @@ APK di-build otomatis di cloud setiap ada perubahan kode, lewat GitHub Actions:
 5. Selesai! Maskot muncul di layar dan tetap ada di atas aplikasi lain
 
 **Gestur bubble:**
-- **Tap** → langsung ke Asisten (chat)
+- **Tap** → maskot senyum 😸 + langsung ke Asisten (chat)
 - **Tap & tahan** → ke Pengaturan
 - **Drag** → pindahkan; saat dilepas, dia "mendarat" menempel di tepi layar terdekat
-- Bubble **memantul** setiap ada pengingat deadline/kelas
+- Ekspresi **kaget** 😳 + bubble **memantul** setiap ada pengingat deadline/kelas
 - Untuk menyembunyikan: notifikasi "Maskot Saku aktif" → **Sembunyikan**
 - Bubble otomatis hidup lagi setelah HP restart (kalau sebelumnya aktif)
 

@@ -16,7 +16,9 @@ import android.content.IntentFilter
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.view.Gravity
@@ -33,9 +35,9 @@ import kotlin.math.sin
  * Bubble maskot anime yang melayang di atas aplikasi lain.
  * - melayang halus naik-turun (bobbing) + goyang kecil
  * - bisa di-drag; saat dilepas menempel ke tepi layar terdekat dengan efek "mendarat"
- * - tap          → buka Asisten Saku
+ * - tap          → senyum + buka Asisten Saku
  * - tap & tahan  → buka Pengaturan
- * - memantul (bounce) setiap ada notifikasi pengingat
+ * - memantul + ekspresi kaget setiap ada notifikasi pengingat
  */
 class BubbleService : Service() {
 
@@ -54,7 +56,7 @@ class BubbleService : Service() {
             ctx.stopService(Intent(ctx, BubbleService::class.java))
         }
 
-        /** Minta bubble memantul (dipanggil saat ada notifikasi pengingat). */
+        /** Minta bubble memantul + ekspresi kaget (dipanggil saat ada notifikasi pengingat). */
         fun pulse(ctx: Context) {
             val i = Intent(ACTION_PULSE)
             i.setPackage(ctx.packageName)
@@ -64,9 +66,13 @@ class BubbleService : Service() {
 
     private lateinit var wm: WindowManager
     private var bubble: FrameLayout? = null
+    private var mascotImg: ImageView? = null
     private var lp: WindowManager.LayoutParams? = null
     private var bobAnim: ValueAnimator? = null
     private var pulseReceiver: BroadcastReceiver? = null
+
+    private val handler = Handler(Looper.getMainLooper())
+    private var restoreJob: Runnable? = null
 
     private var dragging = false
     private var baseY = 0
@@ -83,6 +89,7 @@ class BubbleService : Service() {
 
         pulseReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
+                react(R.drawable.mascot_alert, 3500)
                 bounce()
             }
         }
@@ -107,10 +114,12 @@ class BubbleService : Service() {
     override fun onDestroy() {
         bobAnim?.cancel()
         bobAnim = null
+        restoreJob?.let { handler.removeCallbacks(it) }
         bubble?.let {
             try { wm.removeView(it) } catch (e: Exception) { /* sudah lepas */ }
         }
         bubble = null
+        mascotImg = null
         pulseReceiver?.let {
             try { unregisterReceiver(it) } catch (e: Exception) { /* belum terdaftar */ }
         }
@@ -131,8 +140,9 @@ class BubbleService : Service() {
         img.setImageResource(R.drawable.mascot)
         img.scaleType = ImageView.ScaleType.CENTER_CROP
         frame.addView(img, FrameLayout.LayoutParams(-1, -1))
+        mascotImg = img
 
-        // cincin oval di belakang maskot (maskot.png sudah berbentuk lingkaran transparan)
+        // cincin oval di belakang maskot (mascot.png sudah berbentuk lingkaran transparan)
         val pad = dp(2f)
         frame.setPadding(pad, pad, pad, pad)
         val ring = GradientDrawable()
@@ -205,7 +215,11 @@ class BubbleService : Service() {
                             buzz()
                             openApp("pengaturan")
                         }
-                        !moved -> openApp("asisten")
+                        !moved -> {
+                            react(R.drawable.mascot_happy, 1600)
+                            bounce()
+                            openApp("asisten")
+                        }
                         else -> snapToEdge(v)
                     }
                     true
@@ -219,6 +233,18 @@ class BubbleService : Service() {
                 else -> false
             }
         }
+    }
+
+    /* ---------------- ekspresi ---------------- */
+
+    /** Ganti ekspresi maskot sesaat, lalu kembali ke ekspresi default. */
+    private fun react(resId: Int, durationMs: Long) {
+        val img = mascotImg ?: return
+        restoreJob?.let { handler.removeCallbacks(it) }
+        img.setImageResource(resId)
+        val job = Runnable { mascotImg?.setImageResource(R.drawable.mascot) }
+        restoreJob = job
+        handler.postDelayed(job, durationMs)
     }
 
     /* ---------------- animasi ---------------- */
