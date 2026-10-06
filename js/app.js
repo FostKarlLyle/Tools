@@ -117,6 +117,12 @@
     U.toast(title + (body ? ' — ' + body : ''), 'info', { duration: 5200 });
     if (s.sound) U.chime();
     U.haptic();
+    // di dalam aplikasi native Android: teruskan ke notifikasi sistem & pantulkan bubble maskot
+    try {
+      if (window.SakuNative && typeof window.SakuNative.notify === 'function') {
+        window.SakuNative.notify(String(title), String(body || ''));
+      }
+    } catch (e) { /* bukan native */ }
     if (!s.notifEnabled) return;
     if (!('Notification' in window) || Notification.permission !== 'granted') return;
     const opts = { body: body, tag: tag || ('saku-' + Date.now()), icon: './icons/icon-192.png', badge: './icons/icon-192.png' };
@@ -232,7 +238,8 @@
   /* ================= SERVICE WORKER ================= */
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', function () {
-      navigator.serviceWorker.register('./sw.js').then(function (reg) {
+      try {
+        navigator.serviceWorker.register('./sw.js').then(function (reg) {
         reg.addEventListener('updatefound', function () {
           const nw = reg.installing;
           if (!nw) return;
@@ -245,7 +252,8 @@
             }
           });
         });
-      }).catch(function (e) { console.warn('[Saku] SW gagal', e); });
+        }).catch(function (e) { console.warn('[Saku] SW gagal', e); });
+      } catch (e) { /* file:// atau WebView tanpa SW — abaikan */ }
     });
   }
 

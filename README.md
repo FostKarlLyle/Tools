@@ -4,6 +4,11 @@ Tools web (PWA) yang membantu kuliahmu: **asisten AI yang selalu siap di HP**, b
 
 > Bahasa: Indonesia · Gaya: minimal & clean · Mobile-first
 
+## 📱 Dua rasa: PWA & Aplikasi Android
+
+- **PWA** (folder root) — buka di browser, instal ke layar utama, jalan di mana-mana.
+- **Aplikasi Android** (`android/`) — membungkus PWA + **bubble maskot anime** yang melayang di atas aplikasi lain (tap → chat!). APK di-build otomatis via GitHub Actions. Lihat **[docs/ANDROID.md](docs/ANDROID.md)**.
+
 ---
 
 ## ✨ Fitur

@@ -19,6 +19,22 @@
     return { txt: 'Izin notifikasi: belum diminta', cls: '' };
   }
 
+  /* kartu khusus saat berjalan di aplikasi native Android (bubble maskot) */
+  function nativeBubbleSection() {
+    const N = window.SakuNative;
+    const allowed = N.isOverlayAllowed();
+    const on = N.isBubbleEnabled();
+    return '<section class="card card-accent"><h2>' + UI.icon('sparkles', 18) + ' Bubble Maskot</h2>' +
+      '<p class="hint">Maskot anime melayang di layar, selalu siap di atas aplikasi apa pun. ' +
+      '<strong>Tap</strong> untuk chat, <strong>tahan</strong> untuk pengaturan, <strong>seret</strong> untuk memindahkan — dia juga memantul saat ada pengingat!</p>' +
+      (allowed
+        ? '<p class="hint ok">✅ Izin "tampil di atas aplikasi lain" aktif</p>'
+        : '<p class="hint bad">Izin "tampil di atas aplikasi lain" belum aktif</p>' +
+          '<button class="btn btn-primary full" id="s-overlay">' + UI.icon('check', 17) + ' Izinkan overlay</button>') +
+      UI.switchRow('s-bubble', 'Tampilkan bubble maskot', 'Melayang di tepi layar, bisa digeser-geser', on) +
+      '<p class="hint">Kalau bubble dihilangkan lewat notifikasi Android, nyalakan lagi dari sini.</p></section>';
+  }
+
   function installSection() {
     const standalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
     const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
@@ -110,8 +126,8 @@
         { value: 'dark', label: 'Gelap' }
       ], s.theme) + '</section>';
 
-    /* ----- pasang di hp ----- */
-    html += installSection();
+    /* ----- pasang di hp / bubble native ----- */
+    html += (typeof window.SakuNative !== 'undefined') ? nativeBubbleSection() : installSection();
 
     /* ----- data ----- */
     html += '<section class="card"><h2>' + UI.icon('download', 18) + ' Data Kamu</h2>' +
@@ -212,6 +228,22 @@
     // pasang
     const instBtn = root.querySelector('#s-install');
     if (instBtn) instBtn.addEventListener('click', function () { SAKU.app.promptInstall(); });
+
+    // bubble native (Android)
+    if (typeof window.SakuNative !== 'undefined') {
+      const ovBtn = root.querySelector('#s-overlay');
+      if (ovBtn) ovBtn.addEventListener('click', function () { window.SakuNative.requestOverlayPermission(); });
+      const bubSw = root.querySelector('#s-bubble');
+      if (bubSw) bubSw.addEventListener('change', function () {
+        window.SakuNative.setBubbleEnabled(bubSw.checked);
+        U.haptic();
+        setTimeout(function () { SAKU.app.refresh(); }, 400);
+      });
+      if (!window.__sakuPermBound) {
+        window.__sakuPermBound = true;
+        window.addEventListener('saku:native-perm-changed', function () { SAKU.app.refresh(); });
+      }
+    }
 
     // data
     root.querySelector('#s-export').addEventListener('click', function () {

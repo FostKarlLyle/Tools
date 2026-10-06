@@ -1,0 +1,60 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android {
+    namespace 'com.saku.app'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.saku.app'
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName '1.0.0'
+    }
+
+    buildTypes {
+        debug {
+            // APK debug tetap ditandatangani otomatis (debug keystore) → bisa langsung di-install
+            minifyEnabled false
+        }
+        release {
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+
+    sourceSets {
+        main {
+            // aset web (PWA Saku) disalin dari root repo saat build — satu sumber kebenaran
+            assets.srcDirs += files(layout.buildDirectory.dir('webassets'))
+        }
+    }
+}
+
+// Salin aplikasi web Saku (root repo) → aset Android
+tasks.register('copyWebAssets', Copy) {
+    from(rootProject.projectDir.parentFile) {
+        include 'index.html'
+        include 'manifest.webmanifest'
+        include 'sw.js'
+        include 'styles/**'
+        include 'js/**'
+        include 'icons/**'
+    }
+    into layout.buildDirectory.dir('webassets')
+}
+preBuild.dependsOn 'copyWebAssets'
+
+dependencies {
+    implementation 'org.jetbrains.kotlin:kotlin-stdlib:1.9.24'
+}
