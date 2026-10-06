@@ -15,9 +15,24 @@ android {
         versionName '1.0.0'
     }
 
+    signingConfigs {
+        // Kunci debug yang KONSISTEN antar build — supaya update APK bisa ditimpa
+        // tanpa uninstall. HANYA untuk distribusi pribadi/debug; untuk Play Store
+        // gunakan keystore privatmu sendiri dan JANGAN commit ke repo.
+        saku {
+            storeFile rootProject.file('signing/saku-debug.p12')
+            storePassword 'saku-kucing-hitam-2026'
+            keyAlias 'saku'
+            keyPassword 'saku-kucing-hitam-2026'
+            storeType 'PKCS12'
+        }
+    }
+
     buildTypes {
         debug {
-            // APK debug tetap ditandatangani otomatis (debug keystore) → bisa langsung di-install
+            // APK debug tetap bisa langsung di-install, dan update selanjutnya
+            // menimpa aplikasi lama (tanda tangan tetap sama antar build CI)
+            signingConfig signingConfigs.saku
             minifyEnabled false
         }
         release {

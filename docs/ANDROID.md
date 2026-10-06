@@ -23,6 +23,8 @@ APK di-build otomatis di cloud setiap ada perubahan kode, lewat GitHub Actions:
 6. Saat ditanya, izinkan **"Install dari sumber tidak dikenal"** (aman — ini aplikasimu sendiri)
 
 > Kamu juga bisa memicu build manual: tab Actions → "Build Android APK" → **Run workflow**.
+>
+> **Update APK:** sejak versi dengan tanda tangan tetap, update cukup **ditimpa** (install di atas aplikasi lama) — data tidak hilang. Kalau kamu menginstall APK dari build paling awal (sebelum tanda tangan ditetapkan), **uninstall dulu sekali saja**, lalu install APK baru.
 
 ## 🫧 Mengaktifkan bubble maskot
 
