@@ -96,9 +96,13 @@
       return 'Internetmu sepertinya terputus 😅 Aku butuh koneksi untuk berpikir. Coba lagi setelah online ya.';
     }
     const msg = (e && e.message) ? e.message : '';
+    const detail = SAKU.ai.lastDetail || msg;
+    const jalur = SAKU.ai.lastTransport ? ' (jalur ' + SAKU.ai.lastTransport + ')' : '';
     return 'Maaf, aku gagal menghubungi AI beberapa kali 😅' +
-      (msg ? '\n\nDetail: ' + msg + '\n\n' : '\n\n') +
-      'Coba lagi sebentar lagi. Kalau tetap gagal, cek Pengaturan → Asisten AI (kamu bisa pakai API kustom milikmu sendiri).';
+      (detail ? '\n\nDetail' + jalur + ': ' + detail + '\n\n' : '\n\n') +
+      'Ini biasanya karena server AI gratis sedang membatasi permintaan. Coba lagi sebentar lagi, ' +
+      'atau — biar pasti jalan — buka Pengaturan → Asisten AI, tekan "Tes koneksi" untuk lihat penyebabnya, ' +
+      'lalu isi API Kustom (Groq/OpenRouter/DeepSeek gratis dan cepat).';
   }
 
   async function callAI() {

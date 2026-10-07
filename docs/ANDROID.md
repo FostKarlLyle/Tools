@@ -42,6 +42,12 @@ APK di-build otomatis di cloud setiap ada perubahan kode, lewat GitHub Actions.
 4. Kembali ke aplikasi → nyalakan saklar **Tampilkan bubble maskot**
 5. Selesai! Maskot muncul di layar dan tetap ada di atas aplikasi lain
 
+**Animasi bubble (berjalan sendiri, tidak perlu disentuh):**
+- seluruh bubble melayang naik-turun halus + goyang kecil
+- kepala mengangguk pelan (sprite kepala terpisah, sumbu putar di leher)
+- badan "bernafas" — mengembang-mengempis tipis
+- sesekali tersenyum sendiri saat menganggur (gestur acak tiap 12–26 detik)
+
 **Gestur bubble:**
 - **Tap** → maskot senyum 😸 + langsung ke Asisten (chat)
 - **Tap & tahan** → ke Pengaturan
@@ -52,10 +58,24 @@ APK di-build otomatis di cloud setiap ada perubahan kode, lewat GitHub Actions.
 
 ## 🎨 Mengganti maskot dengan gambarmu sendiri
 
-1. Siapkan gambar karakter (makin besar makin bagus; wajah menghadap depan, komposisi tengah)
-2. Crop jadi **lingkaran** PNG 512×512 (bisa pakai [online circle crop](https://crop-circle.imageonline.co/) atau minta aku memprosesnya — kirim saja filenya)
-3. Ganti file `android/app/src/main/res/drawable-nodpi/mascot.png` dengan gambarmu (nama tetap sama)
-4. Commit & push → tunggu build → unduh APK baru
+Maskot disimpan sebagai sprite PNG **berlatar transparan** di `android/app/src/main/res/drawable-nodpi/`:
+
+| Berkas | Isi |
+|---|---|
+| `mascot.png` | karakter utuh — ekspresi dasar |
+| `mascot_head.png` | potongan **kepala** (dipakai untuk anggukan) |
+| `mascot_body.png` | potongan **badan** (dipakai untuk "napas") |
+| `mascot_happy.png` | ekspresi senyum (tap & gestur idle) |
+| `mascot_alert.png` | ekspresi kaget (pengingat deadline/kelas) |
+
+Aturan tata letak (penting agar animasi tetap rapi — kepala dan badan harus pas saat digerakkan):
+
+- kanvas **512×512 px**, PNG transparan
+- tinggi figur ± **400 px**, digambar di tengah horizontal (mulai x ≈ 80)
+- dasar figur (potongan terbawah) di **y ≈ 474**
+- `mascot_head`/`mascot_body` = hasil potong `mascot.png` pada pita **y = 0,70–0,80** dari kanvas
+
+Cara termudah: kirim gambarmu (wajah menghadap depan, satu figur) lalu minta aku memprosesnya — pemotongan latar, pembuangan halo putih di tepi, penormalan ukuran, dan pemisahan kepala/badan bisa dilakukan otomatis.
 
 ## 🔧 Detail teknis
 
@@ -71,7 +91,33 @@ APK di-build otomatis di cloud setiap ada perubahan kode, lewat GitHub Actions.
 
 **Catatan data:** localStorage di WebView terpisah dari browser HP-mu. Pindahkan data dengan **Pengaturan → Data → Ekspor** di browser, lalu **Impor** di aplikasi.
 
-**Catatan AI:** chat AI butuh internet, sama seperti versi web. Kalau di dalam aplikasi chat gagal terus (keterbatasan `file://` origin di WebView pada beberapa perangkat), alternatifnya: aktifkan **API Kustom** di Pengaturan → Asisten AI, atau ganti URL muatan di `MainActivity.kt` ke alamat hosting HTTPS (mis. GitHub Pages).
+## 💬 Chat AI di dalam aplikasi
+
+Chat AI butuh internet. Supaya tetap jalan meski WebView membatasi permintaan dari halaman `file://`, aplikasi **tidak** memakai `fetch` di dalam WebView:
+
+```
+js/ai.js  →  SakuHttp (jembatan native)  →  HttpBridge.kt  →  internet
+```
+
+Permintaan dikirim oleh Android sendiri (`HttpURLConnection`) di background thread, lalu hasilnya dikembalikan ke halaman. Jadi chat hanya butuh koneksi internet, tanpa tersangkut batasan origin WebView.
+
+Penyedia bawaan (gratis, tanpa API key) dicoba berurutan dengan beberapa model cadangan:
+
+1. Pollinations `POST /openai` — model: pilihanmu → `openai` → `mistral` → `openai-fast`
+2. Pollinations `POST /` (respons teks polos)
+3. Pollinations `GET /{prompt}` (cadangan terakhir)
+
+Kalau semuanya ditolak (server gratis kadang membatasi permintaan, mis. HTTP 403), muncul pesan berisi **detail jalur mana yang gagal**. Untuk memastikan: **Pengaturan → Asisten AI → Tes koneksi** — hasilnya menyebut jalur transport (`native`/`fetch`), lama respons, dan rincian tiap percobaan.
+
+**Paling andal: pakai API Kustom milikmu sendiri** (gratis, cepat, dan stabil) di Pengaturan → Asisten AI:
+
+| Penyedia | Base URL | Model |
+|---|---|---|
+| Groq | `https://api.groq.com/openai/v1` | `llama-3.3-70b-versatile` |
+| OpenRouter | `https://openrouter.ai/api/v1` | `meta-llama/llama-3.3-70b-instruct:free` |
+| DeepSeek | `https://api.deepseek.com/v1` | `deepseek-chat` |
+
+Isi Base URL + API key dari penyedia tersebut, lalu tekan **Tes koneksi**.
 
 ## 🧯 Kalau muncul "Halaman web / Webpage not available"
 

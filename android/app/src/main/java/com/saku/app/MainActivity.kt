@@ -90,6 +90,9 @@ class MainActivity : Activity() {
             }
         }
         webView.addJavascriptInterface(NativeBridge(this), "SakuNative")
+        // HTTP lewat native — jalan pintas yang membuat chat AI tetap bisa jalan
+        // walau WebView membatasi permintaan dari halaman file://
+        webView.addJavascriptInterface(HttpBridge(this), "SakuHttp")
 
         // route awal (mis. bubble meminta langsung ke chat)
         pendingRoute = intent?.getStringExtra("route")
@@ -157,6 +160,13 @@ class MainActivity : Activity() {
             }
         }
         return false
+    }
+
+    /** Jalankan JavaScript di WebView (dipakai jembatan native, mis. HttpBridge). */
+    fun evalJs(js: String) {
+        runOnUiThread {
+            if (::webView.isInitialized) webView.evaluateJavascript(js, null)
+        }
     }
 
     /** Ulangi pencarian dari kandidat pertama (dipakai tombol "Coba lagi" di halaman diagnosa). */

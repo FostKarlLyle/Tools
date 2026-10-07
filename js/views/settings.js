@@ -7,7 +7,7 @@
   const U = SAKU.util, UI = SAKU.ui;
   SAKU.views = SAKU.views || {};
   const Settings = { TICK: false };
-  const VERSION = '1.0.0';
+  const VERSION = '1.0.2';
 
   function permStatus() {
     if (!('Notification' in window)) {
@@ -229,10 +229,15 @@
       try {
         const r = await SAKU.ai.test();
         tres.className = 'hint ok';
-        tres.textContent = '✅ Terhubung via ' + r.via + ' (' + r.ms + ' ms)' + (r.sample ? ' · jawaban: "' + r.sample + '"' : '');
+        tres.innerHTML = '✅ Terhubung via ' + U.esc(r.via) + ' (' + r.ms + ' ms)' +
+          (r.transport ? ' · jalur: ' + U.esc(r.transport) : '') +
+          (r.sample ? ' · jawaban: "' + U.esc(r.sample) + '"' : '') +
+          (r.detail && r.detail.length > 1 ? '<br><span class="tag">' + r.detail.map(U.esc).join('<br>') + '</span>' : '');
       } catch (e) {
         tres.className = 'hint bad';
-        tres.textContent = '❌ Gagal: ' + ((e && e.message) || 'tidak diketahui') + '. Cek Base URL / API key / koneksi.';
+        const lines = (e && e.detail && e.detail.length) ? e.detail : [((e && e.message) || 'tidak diketahui')];
+        tres.innerHTML = '❌ Gagal menghubungi AI:<br>' + lines.map(U.esc).join('<br>') +
+          '<br>Cek koneksi internet, lalu (opsional) isi <strong>API Kustom</strong> di atas — Groq/OpenRouter/DeepSeek punya kunci gratis.';
       }
       tbtn.disabled = false;
     });

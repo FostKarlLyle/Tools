@@ -60,6 +60,24 @@ jobs:
         run: |
           set -euo pipefail
           APK=android/app/build/outputs/apk/debug/app-debug.apk
+          # sprite maskot harus ada dan berlatar transparan (color type 6 = RGBA),
+          # kalau tidak karakter akan tampil sebagai kotak putih
+          python3 - <<'PY'
+          import glob, struct
+          need = ['mascot.png', 'mascot_head.png', 'mascot_body.png', 'mascot_happy.png', 'mascot_alert.png']
+          bad = []
+          for name in need:
+              p = 'android/app/src/main/res/drawable-nodpi/' + name
+              try:
+                  d = open(p, 'rb').read()
+              except FileNotFoundError:
+                  bad.append(name + ' (hilang)')
+                  continue
+              if d[:8] != b'\x89PNG\r\n\x1a\n' or d[25] != 6:
+                  bad.append(name + ' (bukan PNG RGBA transparan)')
+          print('sprite maskot OK' if not bad else 'MASALAH: ' + ', '.join(bad))
+          raise SystemExit(1 if bad else 0)
+          PY
           python3 - "$APK" > /tmp/apk-entries.txt <<'PY'
           import sys, zipfile
           with zipfile.ZipFile(sys.argv[1]) as z:
