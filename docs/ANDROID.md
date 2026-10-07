@@ -45,7 +45,9 @@ APK di-build otomatis di cloud setiap ada perubahan kode, lewat GitHub Actions.
 
 **Animasi bubble (berjalan sendiri, tidak perlu disentuh):**
 - karakter naik-turun halus + goyang kecil di atas awan (awan tetap diam)
-- kepala mengangguk pelan (sprite kepala terpisah, sumbu putar di leher)
+- kepala bergerak berlapis: anggukan, goyangan lambat, dan geser samping pelan
+- **mata berkedip** tiap 2,5–7 detik (kadang dua kali berturut-turut); kelopaknya
+  digambar dengan kode di `EyeLidView.kt` — tanpa aset gambar tambahan
 - badan "bernafas" — mengembang-mengempis tipis
 - awan ikut mengembang/mengempis saat karakter turun (kesan memantul)
 - sesekali tersenyum sendiri saat menganggur (gestur acak tiap 12–26 detik)

@@ -102,6 +102,8 @@ class BubbleService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private var restoreJob: Runnable? = null
     private var idleJob: Runnable? = null
+    private var blinkJob: Runnable? = null
+    private var blinkAnim: ValueAnimator? = null
     private val rnd = Random.Default
 
     private var dragging = false
@@ -110,6 +112,9 @@ class BubbleService : Service() {
     private var pivotsReady = false
     private var moverView: View? = null
     private var cloudView: CloudView? = null
+    private var lidView: EyeLidView? = null
+    /** wadah kepala + kelopak mata — animasi kepala dikenakan ke sini, bukan ke gambarnya */
+    private var headGroup: View? = null
     private var hitMask: BooleanArray? = null
     private var hitCols = 0
     private var hitRows = 0
@@ -137,6 +142,7 @@ class BubbleService : Service() {
             registerReceiver(pulseReceiver, filter)
         }
         scheduleIdle()
+        scheduleBlink()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -151,8 +157,11 @@ class BubbleService : Service() {
     override fun onDestroy() {
         bobAnim?.cancel()
         bobAnim = null
+        blinkAnim?.cancel()
+        blinkAnim = null
         restoreJob?.let { handler.removeCallbacks(it) }
         idleJob?.let { handler.removeCallbacks(it) }
+        blinkJob?.let { handler.removeCallbacks(it) }
         bubble?.let {
             try { wm.removeView(it) } catch (e: Exception) { /* sudah lepas */ }
         }
@@ -161,6 +170,8 @@ class BubbleService : Service() {
         headImg = null
         moverView = null
         cloudView = null
+        lidView = null
+        headGroup = null
         pulseReceiver?.let {
             try { unregisterReceiver(it) } catch (e: Exception) { /* belum terdaftar */ }
         }
@@ -210,11 +221,21 @@ class BubbleService : Service() {
         mover.addView(body, FrameLayout.LayoutParams(-1, -1))
         bodyImg = body
 
+        // kepala + kelopak mata dalam satu wadah: semua gerakan kepala (angguk, goyang,
+        // geser) dikenakan ke wadah ini supaya kelopak selalu tepat di atas mata.
+        val group = FrameLayout(this)
+        mover.addView(group, FrameLayout.LayoutParams(-1, -1))
+        headGroup = group
+
         val head = ImageView(this)
         head.setImageResource(R.drawable.mascot_head)
         head.scaleType = ImageView.ScaleType.FIT_CENTER
-        mover.addView(head, FrameLayout.LayoutParams(-1, -1))
+        group.addView(head, FrameLayout.LayoutParams(-1, -1))
         headImg = head
+
+        val lid = EyeLidView(this)
+        group.addView(lid, FrameLayout.LayoutParams(-1, -1))
+        lidView = lid
 
         // Awan ditambahkan SETELAH karakter supaya digambar di depan: bagian bawah sprite
         // (potongan rata di torso) tertutup gumpalan awan → karakter tampak berdiri di awan.
@@ -368,6 +389,7 @@ class BubbleService : Service() {
         val body = bodyImg
         restoreJob?.let { handler.removeCallbacks(it) }
         head.setImageResource(resId)
+        lidView?.closure = 0f
         body?.visibility = View.INVISIBLE
         popExpression()
         val job = Runnable {
@@ -386,6 +408,38 @@ class BubbleService : Service() {
         head.scaleY = 0.96f
         head.animate().scaleX(1f).scaleY(1f).setDuration(220)
             .setInterpolator(AccelerateDecelerateInterpolator()).start()
+    }
+
+    /**
+     * Kedipan mata berkala: menutup cepat, tahan sebentar, lalu buka lebih lambat.
+     * Interval acak 2,5–7 detik; kadang diikuti kedipan kedua (double blink).
+     */
+    private fun scheduleBlink() {
+        blinkJob?.let { handler.removeCallbacks(it) }
+        val delay = 2500L + rnd.nextLong(4500L)
+        val job = Runnable {
+            blink()
+            scheduleBlink()
+        }
+        blinkJob = job
+        handler.postDelayed(job, delay)
+    }
+
+    private fun blink() {
+        val lid = lidView ?: return
+        // jangan berkedip saat ekspresi khusus tampil (mata sudah tertutup di sprite)
+        if (bodyImg?.visibility != View.VISIBLE || dragging) return
+        blinkAnim?.cancel()
+        // 0 → 1 (62 ms) → tahan (25%) → 0 (125 ms)
+        blinkAnim = ValueAnimator.ofFloat(0f, 1f, 1f, 0f).apply {
+            duration = 250
+            addUpdateListener { a -> lid.closure = a.animatedValue as Float }
+            start()
+        }
+        // kadang kedip dua kali seperti orang berkedip alami
+        if (rnd.nextFloat() < 0.3f) {
+            handler.postDelayed({ blink() }, 300L)
+        }
     }
 
     /** Sesekali tersenyum sendiri saat sedang menganggur (supaya tidak terlihat kaku). */
@@ -437,10 +491,15 @@ class BubbleService : Service() {
                         c.scaleX = 1f + 0.045f * press
                         c.rotation = (sin(t * 0.5 + 0.4) * 0.7).toFloat()
                     }
-                    // kepala mengangguk dengan fase sedikit berbeda dari badan
-                    headImg?.let { h ->
-                        h.translationY = (sin(t + 0.8) * headNod - headNod * 0.4).toFloat()
-                        h.rotation = (sin(t + 1.9) * 1.6).toFloat()
+                    // kepala bergerak berlapis: anggukan cepat + goyangan lambat + geser
+                    // samping pelan (dua frekuensi berbeda → terasa hidup, tidak monoton)
+                    val swayX = dp(1.5f).toFloat()
+                    val slowY = dp(1.2f).toFloat()
+                    headGroup?.let { h ->
+                        h.translationY = (sin(t + 0.8) * headNod - headNod * 0.4 +
+                                          sin(t * 0.43 + 2.1) * slowY).toFloat()
+                        h.translationX = (sin(t * 0.37 + 0.5) * swayX).toFloat()
+                        h.rotation = (sin(t + 1.9) * 1.6 + sin(t * 0.53 + 0.7) * 2.2).toFloat()
                     }
                     // badan bernapas (dua kali lebih cepat dari bobbing)
                     bodyImg?.let { bd ->
@@ -460,7 +519,7 @@ class BubbleService : Service() {
      */
     private fun setupPivotsOnce() {
         if (pivotsReady) return
-        val head = headImg ?: return
+        val head = headGroup ?: return
         val body = bodyImg ?: return
         if (head.width <= 0 || body.width <= 0) return
         head.pivotX = head.width * 0.5f
