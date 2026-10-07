@@ -17,8 +17,9 @@ APK di-build otomatis di cloud setiap ada perubahan kode, lewat GitHub Actions.
 
 **Cara paling gampang — GitHub Releases:**
 
-1. Buka repo ini di GitHub → **Releases** (atau langsung: `/releases/latest`)
-2. Unduh **`saku-android.apk`** dari rilis **terbaru** (tag `build-<nomor>` paling besar)
+1. Buka repo ini di GitHub → **Releases** (halaman `/releases`)
+   > Catatan: setiap build ditandai *pre-release*, jadi belum ada label "Latest" — pilih rilis dengan **tag `build-<nomor>` paling besar**.
+2. Unduh **`saku-android.apk`** dari rilis **terbaru** itu
 3. Buka file itu di HP → izinkan **"Install dari sumber tidak dikenal"** → install
 4. Buka aplikasi → **Pengaturan → Bubble Maskot** → pastikan tertulis **"Versi aplikasi Android: v…"** yang sesuai rilis terbaru
 
