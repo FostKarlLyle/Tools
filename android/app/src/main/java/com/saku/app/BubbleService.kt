@@ -13,8 +13,9 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.graphics.BitmapFactory
+import android.graphics.Color
 import android.graphics.PixelFormat
-import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -56,12 +57,17 @@ class BubbleService : Service() {
         private const val CHANNEL = "bubble"
         private const val NOTIF_ID = 7
 
-        /** Ukuran bubble di layar (dp). 150dp ≈ 3,5 cm di HP biasa. */
-        private const val TARGET_DP = 150f
-        /** Ukuran gambar karakter di dalam bubble (dp) — ruang sisanya untuk cincin. */
-        private const val CONTENT_DP = 140f
-        /** Celah transparan di sekeliling karakter supaya cincin putih tidak menempel. */
-        private const val PAD_DP = 6f
+        /** Tinggi karakter di layar (dp) — jendela bubble mengikuti ukuran ini. */
+        private const val CHAR_H_DP = 150f
+        /**
+         * Geometri sprite: kanvas 424x472 dengan isi karakter 352x400.
+         * Sisa 36 px di setiap sisi = ruang transparan untuk animasi (anggukan, napas,
+         * pantulan) supaya gerakan tidak terpotong tepi jendela.
+         */
+        private const val SPRITE_W = 424f
+        private const val SPRITE_H = 472f
+        private const val CHAR_W = 352f
+        private const val CHAR_H = 400f
 
         fun start(ctx: Context) {
             val i = Intent(ctx, BubbleService::class.java)
@@ -97,6 +103,10 @@ class BubbleService : Service() {
     private var baseY = 0
     private var sizePx = 0
     private var pivotsReady = false
+    private var moverView: View? = null
+    private var hitMask: BooleanArray? = null
+    private var hitCols = 0
+    private var hitRows = 0
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -155,37 +165,43 @@ class BubbleService : Service() {
 
     @SuppressLint("ClickableViewAccessibility")
     private fun addBubble() {
-        sizePx = dp(TARGET_DP)
+        // jendela sebesar karakter + margin animasi (bukan kotak besar berisi ruang kosong)
+        val winW = dp(CHAR_H_DP * SPRITE_W / CHAR_H)
+        val winH = dp(CHAR_H_DP * SPRITE_H / CHAR_H)
+        sizePx = winW
         val dm = resources.displayMetrics
 
-        val frame = FrameLayout(this)
+        // Root jendela: transparan penuh — tanpa latar, tanpa lingkaran; yang tampak
+        // hanya karakter. Sentuhan di area transparan dilewatkan ke aplikasi di bawahnya.
+        val frame = object : FrameLayout(this) {
+            override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+                if (ev.actionMasked == MotionEvent.ACTION_DOWN && !hitsCharacter(ev.x, ev.y)) return false
+                return super.dispatchTouchEvent(ev)
+            }
+        }
 
-        // badan di bawah, kepala di atas — keduanya sprite 512x512 dengan tata letak sama,
+        // Wadah karakter: animasi skala (pantulan/mendarat) dikenakan ke sini, bukan ke
+        // jendela, supaya gambar tidak terpotong tepi permukaan.
+        val mover = FrameLayout(this)
+        frame.addView(mover, FrameLayout.LayoutParams(-1, -1))
+        moverView = mover
+
+        // badan di bawah, kepala di atas — keduanya sprite dengan tata letak sama,
         // jadi bisa digerakkan sendiri-sendiri tanpa terlihat "jahitan" di leher.
         val body = ImageView(this)
         body.setImageResource(R.drawable.mascot_body)
         body.scaleType = ImageView.ScaleType.FIT_CENTER
-        frame.addView(body, FrameLayout.LayoutParams(-1, -1))
+        mover.addView(body, FrameLayout.LayoutParams(-1, -1))
         bodyImg = body
 
         val head = ImageView(this)
         head.setImageResource(R.drawable.mascot_head)
         head.scaleType = ImageView.ScaleType.FIT_CENTER
-        frame.addView(head, FrameLayout.LayoutParams(-1, -1))
+        mover.addView(head, FrameLayout.LayoutParams(-1, -1))
         headImg = head
 
-        // cincin oval putih di belakang maskot
-        val pad = dp(PAD_DP)
-        frame.setPadding(pad, pad, pad, pad)
-        val ring = GradientDrawable()
-        ring.shape = GradientDrawable.OVAL
-        ring.setColor(0xFFFFFFFF.toInt())
-        ring.setStroke(dp(1.5f), 0xFF4F46E5.toInt())
-        frame.background = ring
-        frame.clipToPadding = false
-
         val p = WindowManager.LayoutParams(
-            sizePx, sizePx,
+            winW, winH,
             if (Build.VERSION.SDK_INT >= 26) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
@@ -204,6 +220,50 @@ class BubbleService : Service() {
         bubble = frame
         lp = p
         startBobbing()
+    }
+
+    /**
+     * Peta kasar area karakter (diambil dari alpha sprite) supaya sentuhan hanya aktif
+     * tepat di badan karakter — bukan di kotak transparan di sekelilingnya.
+     * Kalau peta gagal dibuat, semua area diterima (perilaku lama).
+     */
+    private fun buildHitMask() {
+        if (hitMask != null) return
+        try {
+            val bmp = BitmapFactory.decodeResource(resources, R.drawable.mascot) ?: return
+            val cols = 30
+            val rows = (cols * bmp.height / bmp.width.toFloat()).toInt().coerceAtLeast(1)
+            val mask = BooleanArray(cols * rows)
+            for (r in 0 until rows) {
+                for (c in 0 until cols) {
+                    val x = ((c + 0.5f) * bmp.width / cols).toInt().coerceIn(0, bmp.width - 1)
+                    val y = ((r + 0.5f) * bmp.height / rows).toInt().coerceIn(0, bmp.height - 1)
+                    mask[r * cols + c] = Color.alpha(bmp.getPixel(x, y)) > 24
+                }
+            }
+            bmp.recycle()
+            hitMask = mask
+            hitCols = cols
+            hitRows = rows
+        } catch (e: Exception) { /* biarkan null */ }
+    }
+
+    private fun hitsCharacter(x: Float, y: Float): Boolean {
+        val f = bubble ?: return true
+        if (hitMask == null) buildHitMask()
+        val mask = hitMask ?: return true
+        if (f.width <= 0 || f.height <= 0) return true
+        val c = (x / f.width * hitCols).toInt()
+        val r = (y / f.height * hitRows).toInt()
+        // periksa tetangga juga supaya bagian tipis (ekor, telinga) tetap mudah disentuh
+        for (dr in -1..1) {
+            for (dc in -1..1) {
+                val rr = r + dr
+                val cc = c + dc
+                if (rr in 0 until hitRows && cc in 0 until hitCols && mask[rr * hitCols + cc]) return true
+            }
+        }
+        return false
     }
 
     private fun attachTouch(frame: FrameLayout, p: WindowManager.LayoutParams) {
@@ -391,21 +451,23 @@ class BubbleService : Service() {
             }
             addListener(object : AnimatorListenerAdapter() {
                 override fun onAnimationEnd(animation: Animator) {
-                    land(v)
+                    land()
                 }
             })
             start()
         }
     }
 
-    private fun land(v: View) {
+    /** Efek "mendarat" — dikenakan ke wadah karakter (bukan jendela) supaya tidak terpotong. */
+    private fun land() {
+        val v = moverView ?: return
         ValueAnimator.ofFloat(0f, 1f).apply {
             duration = 300
             addUpdateListener { a ->
                 val t = a.animatedValue as Float
                 val s = sin((t * Math.PI).toDouble()).toFloat()
-                v.scaleX = 1f + s * 0.12f
-                v.scaleY = 1f - s * 0.10f
+                v.scaleX = 1f + s * 0.10f
+                v.scaleY = 1f - s * 0.08f
             }
             addListener(object : AnimatorListenerAdapter() {
                 override fun onAnimationEnd(animation: Animator) {
@@ -419,8 +481,8 @@ class BubbleService : Service() {
 
     /** Pantulan gembira (atau lembut untuk gestur idle) saat ada notifikasi. */
     private fun bounce(soft: Boolean = false) {
-        val v = bubble ?: return
-        val strength = if (soft) 0.10f else 0.22f
+        val v = moverView ?: return
+        val strength = if (soft) 0.08f else 0.14f
         ValueAnimator.ofFloat(0f, 1f).apply {
             duration = if (soft) 420 else 600
             addUpdateListener { a ->

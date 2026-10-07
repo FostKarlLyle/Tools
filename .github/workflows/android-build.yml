@@ -118,11 +118,16 @@ jobs:
               def alpha(x, y):
                   return px[(y*w + x)*4 + 3]
               corners = [alpha(0,0), alpha(w-1,0), alpha(0,h-1), alpha(w-1,h-1)]
+              # baris/kolom terluar harus transparan penuh (margin untuk animasi)
+              edges = ([alpha(x, 0) for x in range(0, w, 5)] + [alpha(x, h-1) for x in range(0, w, 5)] +
+                       [alpha(0, y) for y in range(0, h, 5)] + [alpha(w-1, y) for y in range(0, h, 5)])
               semi = sum(1 for y in range(0, h, 7) for x in range(0, w, 7) if alpha(x, y) == 0)
               total = len(range(0, h, 7)) * len(range(0, w, 7))
-              print(f'{name}: {w}x{h} sudut_alpha={corners} kosong={100*semi/total:.0f}%')
+              print(f'{name}: {w}x{h} sudut_alpha={corners} tepi_maks_alpha={max(edges)} kosong={100*semi/total:.0f}%')
               if max(corners) > 10:
                   bad.append(f'{name} (sudut tidak transparan → latar akan terlihat sebagai kotak)')
+              if max(edges) > 10:
+                  bad.append(f'{name} (tepi tidak transparan → gerakan animasi akan terpotong)')
               if semi == 0:
                   bad.append(f'{name} (tidak ada piksel transparan sama sekali)')
           print('sprite maskot OK' if not bad else 'MASALAH: ' + ', '.join(bad))

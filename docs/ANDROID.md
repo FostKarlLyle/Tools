@@ -70,10 +70,12 @@ Maskot disimpan sebagai sprite PNG **berlatar transparan** di `android/app/src/m
 
 Aturan tata letak (penting agar animasi tetap rapi — kepala dan badan harus pas saat digerakkan):
 
-- kanvas **512×512 px**, PNG transparan
-- tinggi figur ± **400 px**, digambar di tengah horizontal (mulai x ≈ 80)
-- dasar figur (potongan terbawah) di **y ≈ 474**
-- `mascot_head`/`mascot_body` = hasil potong `mascot.png` pada pita **y = 0,70–0,80** dari kanvas
+- kanvas **424×472 px**, PNG transparan (RGBA)
+- isi karakter **352×400 px**, digambar di tengah: mulai **x = 36**, **y = 36**
+- sisi luar 36 px di setiap sisi **wajib transparan** — itu ruang untuk animasi (anggukan, napas, pantulan); kalau terisi, gerakan akan terpotong tepi jendela
+- `mascot_head`/`mascot_body` = hasil potong `mascot.png` pada pita **y = 64%-84%** dari kanvas
+
+Jendela bubble mengikuti karakter: tingginya 150 dp, lebarnya 150 × 424/472 ≈ 135 dp (bukan kotak penuh), **tanpa lingkaran/latar apa pun**. Sentuhan hanya diterima di area karakter — tap di bagian transparan diteruskan ke aplikasi di bawahnya.
 
 Cara termudah: kirim gambarmu (wajah menghadap depan, satu figur) lalu minta aku memprosesnya — pemotongan latar, pembuangan halo putih di tepi, penormalan ukuran, dan pemisahan kepala/badan bisa dilakukan otomatis.
 
