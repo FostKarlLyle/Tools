@@ -58,7 +58,7 @@ class BubbleService : Service() {
         private const val NOTIF_ID = 7
 
         /** Tinggi karakter di layar (dp) — jendela bubble mengikuti ukuran ini. */
-        private const val CHAR_H_DP = 150f
+        private const val CHAR_H_DP = 112f
         /**
          * Geometri sprite: kanvas 424x472 dengan isi karakter 352x400.
          * Sisa 36 px di setiap sisi = ruang transparan untuk animasi (anggukan, napas,
@@ -68,6 +68,11 @@ class BubbleService : Service() {
         private const val SPRITE_H = 472f
         private const val CHAR_W = 352f
         private const val CHAR_H = 400f
+        /** Awan di bawah maskot (fraksi terhadap tinggi/lebar karakter). */
+        private const val CLOUD_H_RATIO = 0.45f
+        private const val CLOUD_W_RATIO = 1.35f
+        /** Posisi atas view awan terhadap tinggi karakter. */
+        private const val CLOUD_TOP_RATIO = 0.74f
 
         fun start(ctx: Context) {
             val i = Intent(ctx, BubbleService::class.java)
@@ -104,6 +109,7 @@ class BubbleService : Service() {
     private var sizePx = 0
     private var pivotsReady = false
     private var moverView: View? = null
+    private var cloudView: CloudView? = null
     private var hitMask: BooleanArray? = null
     private var hitCols = 0
     private var hitRows = 0
@@ -153,6 +159,8 @@ class BubbleService : Service() {
         bubble = null
         bodyImg = null
         headImg = null
+        moverView = null
+        cloudView = null
         pulseReceiver?.let {
             try { unregisterReceiver(it) } catch (e: Exception) { /* belum terdaftar */ }
         }
@@ -165,14 +173,19 @@ class BubbleService : Service() {
 
     @SuppressLint("ClickableViewAccessibility")
     private fun addBubble() {
-        // jendela sebesar karakter + margin animasi (bukan kotak besar berisi ruang kosong)
-        val winW = dp(CHAR_H_DP * SPRITE_W / CHAR_H)
-        val winH = dp(CHAR_H_DP * SPRITE_H / CHAR_H)
+        // --- ukuran: karakter kecil + awan di bawahnya (jendela mengikuti keduanya) ---
+        val charW = dp(CHAR_H_DP * SPRITE_W / CHAR_H)
+        val charH = dp(CHAR_H_DP)
+        val cloudW = (charW * CLOUD_W_RATIO).toInt()
+        val cloudH = (charH * CLOUD_H_RATIO).toInt()
+        val cloudTop = (charH * CLOUD_TOP_RATIO).toInt()
+        val winW = maxOf(charW, cloudW)
+        val winH = cloudTop + cloudH + dp(2f)
         sizePx = winW
         val dm = resources.displayMetrics
 
-        // Root jendela: transparan penuh — tanpa latar, tanpa lingkaran; yang tampak
-        // hanya karakter. Sentuhan di area transparan dilewatkan ke aplikasi di bawahnya.
+        // Root jendela: transparan penuh, tanpa latar. Sentuhan di area transparan
+        // dilewatkan ke aplikasi di bawahnya.
         val frame = object : FrameLayout(this) {
             override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
                 if (ev.actionMasked == MotionEvent.ACTION_DOWN && !hitsCharacter(ev.x, ev.y)) return false
@@ -180,10 +193,13 @@ class BubbleService : Service() {
             }
         }
 
-        // Wadah karakter: animasi skala (pantulan/mendarat) dikenakan ke sini, bukan ke
-        // jendela, supaya gambar tidak terpotong tepi permukaan.
+        // Wadah karakter: animasi (bobbing, goyang, pantulan) dikenakan ke sini — bukan ke
+        // jendela — supaya awan tetap jadi jangkar dan gambar tidak terpotong tepi permukaan.
         val mover = FrameLayout(this)
-        frame.addView(mover, FrameLayout.LayoutParams(-1, -1))
+        val moverLp = FrameLayout.LayoutParams(charW, charH)
+        moverLp.leftMargin = (winW - charW) / 2
+        moverLp.topMargin = 0
+        frame.addView(mover, moverLp)
         moverView = mover
 
         // badan di bawah, kepala di atas — keduanya sprite dengan tata letak sama,
@@ -199,6 +215,15 @@ class BubbleService : Service() {
         head.scaleType = ImageView.ScaleType.FIT_CENTER
         mover.addView(head, FrameLayout.LayoutParams(-1, -1))
         headImg = head
+
+        // Awan ditambahkan SETELAH karakter supaya digambar di depan: bagian bawah sprite
+        // (potongan rata di torso) tertutup gumpalan awan → karakter tampak berdiri di awan.
+        val cloud = CloudView(this)
+        val cloudLp = FrameLayout.LayoutParams(cloudW, cloudH)
+        cloudLp.leftMargin = (winW - cloudW) / 2
+        cloudLp.topMargin = cloudTop
+        frame.addView(cloud, cloudLp)
+        cloudView = cloud
 
         val p = WindowManager.LayoutParams(
             winW, winH,
@@ -249,12 +274,14 @@ class BubbleService : Service() {
     }
 
     private fun hitsCharacter(x: Float, y: Float): Boolean {
-        val f = bubble ?: return true
+        val m = moverView ?: return true
+        // area awan (di bawah karakter) juga bagian dari maskot → boleh disentuh
+        if (y > m.bottom) return true
         if (hitMask == null) buildHitMask()
         val mask = hitMask ?: return true
-        if (f.width <= 0 || f.height <= 0) return true
-        val c = (x / f.width * hitCols).toInt()
-        val r = (y / f.height * hitRows).toInt()
+        if (m.width <= 0 || m.height <= 0) return true
+        val c = ((x - m.left) / m.width * hitCols).toInt()
+        val r = (y / m.height * hitRows).toInt()
         // periksa tetangga juga supaya bagian tipis (ekor, telinga) tetap mudah disentuh
         for (dr in -1..1) {
             for (dc in -1..1) {
@@ -383,9 +410,9 @@ class BubbleService : Service() {
      * badan bernapas. Semua bersumbu sama supaya gerakannya terasa satu tubuh.
      */
     private fun startBobbing() {
-        val ampY = dp(4f).toFloat()          // naik-turun seluruh bubble
-        val ampRot = 1.7f                    // goyang seluruh bubble (derajat)
-        val headNod = dp(2.6f).toFloat()     // anggukan kepala
+        val ampY = dp(3.2f).toFloat()        // naik-turun karakter di atas awan
+        val ampRot = 1.6f                    // goyang karakter (derajat)
+        val headNod = dp(2.2f).toFloat()     // anggukan kepala
         val breath = 0.018f                  // "napas" badan
 
         bobAnim = ValueAnimator.ofFloat(0f, (Math.PI * 2).toFloat()).apply {
@@ -396,13 +423,19 @@ class BubbleService : Service() {
                 val t = (anim.animatedValue as Float).toDouble()
                 setupPivotsOnce()
                 if (!dragging) {
-                    val offset = (sin(t) * ampY).toInt()
-                    lp?.let { params ->
-                        params.y = baseY + offset
-                        bubble?.let { b ->
-                            b.rotation = (sin(t + 1.1) * ampRot).toFloat()
-                            try { wm.updateViewLayout(b, params) } catch (e: Exception) { }
-                        }
+                    // Jendela TIDAK bergerak: awan tetap di tempatnya, hanya karakter
+                    // yang naik-turun dan bergoyang — kesannya berdiri di atas awan.
+                    val offset = (sin(t) * ampY).toFloat()
+                    moverView?.let { m ->
+                        m.translationY = offset
+                        m.rotation = (sin(t + 1.1) * ampRot).toFloat()
+                    }
+                    // awan mengembang/mengempis mengikuti turun-naiknya karakter
+                    cloudView?.let { c ->
+                        val press = ((sin(t) + 1.0) / 2.0).toFloat()   // 0..1 saat karakter turun
+                        c.scaleY = 1f - 0.06f * press
+                        c.scaleX = 1f + 0.045f * press
+                        c.rotation = (sin(t * 0.5 + 0.4) * 0.7).toFloat()
                     }
                     // kepala mengangguk dengan fase sedikit berbeda dari badan
                     headImg?.let { h ->
@@ -434,6 +467,16 @@ class BubbleService : Service() {
         head.pivotY = head.height * 0.45f
         body.pivotX = body.width / 2f
         body.pivotY = body.height.toFloat()
+        // awan mengembang dari dasarnya (tidak terangkat saat mengempis)
+        cloudView?.let { c ->
+            c.pivotX = c.width / 2f
+            c.pivotY = c.height.toFloat()
+        }
+        // karakter membesar/mengecil dari kakinya (karena berdiri di atas awan)
+        moverView?.let { m ->
+            m.pivotX = m.width / 2f
+            m.pivotY = m.height.toFloat()
+        }
         pivotsReady = true
     }
 

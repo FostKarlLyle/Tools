@@ -44,9 +44,10 @@ APK di-build otomatis di cloud setiap ada perubahan kode, lewat GitHub Actions.
 5. Selesai! Maskot muncul di layar dan tetap ada di atas aplikasi lain
 
 **Animasi bubble (berjalan sendiri, tidak perlu disentuh):**
-- seluruh bubble melayang naik-turun halus + goyang kecil
+- karakter naik-turun halus + goyang kecil di atas awan (awan tetap diam)
 - kepala mengangguk pelan (sprite kepala terpisah, sumbu putar di leher)
 - badan "bernafas" — mengembang-mengempis tipis
+- awan ikut mengembang/mengempis saat karakter turun (kesan memantul)
 - sesekali tersenyum sendiri saat menganggur (gestur acak tiap 12–26 detik)
 
 **Gestur bubble:**
@@ -76,7 +77,15 @@ Aturan tata letak (penting agar animasi tetap rapi — kepala dan badan harus pa
 - sisi luar 36 px di setiap sisi **wajib transparan** — itu ruang untuk animasi (anggukan, napas, pantulan); kalau terisi, gerakan akan terpotong tepi jendela
 - `mascot_head`/`mascot_body` = hasil potong `mascot.png` pada pita **y = 64%-84%** dari kanvas
 
-Jendela bubble mengikuti karakter: tingginya 150 dp, lebarnya 150 × 424/472 ≈ 135 dp (bukan kotak penuh), **tanpa lingkaran/latar apa pun**. Sentuhan hanya diterima di area karakter — tap di bagian transparan diteruskan ke aplikasi di bawahnya.
+Jendela bubble mengikuti karakter + awan: karakter tingginya **112 dp** (lebarnya ~101 dp), di bawahnya ada **awan** setinggi ~38 dp yang menutupi bagian bawah sprite — jadi kesannya maskot berdiri di atas awan, bukan terbang. Jendela overlay-nya ~136 × 135 dp, **tanpa latar apa pun**. Sentuhan hanya diterima di area karakter dan awan; tap di bagian transparan diteruskan ke aplikasi di bawahnya.
+
+Awan digambar penuh dengan kode di `CloudView.kt` (gabungan gumpalan lingkaran + alas oval, dengan bayangan lembut) — **bukan aset gambar**, jadi tidak ada berkas tambahan yang perlu diurus saat mengganti maskot.
+
+**Animasi:**
+- karakter naik-turun (±3 dp) dan bergoyang pelan — **awan tetap di tempat** sebagai jangkar
+- awan mengembang/mengempis tipis mengikuti turun-naiknya karakter (kesan memantul)
+- kepala mengangguk, badan bernapas, dan sesekali tersenyum sendiri saat menganggur
+- bagian bawah sprite (torso) dibuat **memudar** pada 80%–94% tinggi, supaya tidak ada garis potongan rata di sisi awan
 
 Cara termudah: kirim gambarmu (wajah menghadap depan, satu figur) lalu minta aku memprosesnya — pemotongan latar, pembuangan halo putih di tepi, penormalan ukuran, dan pemisahan kepala/badan bisa dilakukan otomatis.
 

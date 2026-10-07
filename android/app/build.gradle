@@ -18,8 +18,8 @@ android {
         targetSdk 34
         // Naikkan versi setiap perbaikan supaya mudah dicek di HP:
         // Pengaturan → Aplikasi → Saku → versi (atau di dalam app: Pengaturan → Bubble Maskot)
-        versionCode 5
-        versionName '1.0.4'
+        versionCode 6
+        versionName '1.0.5'
     }
 
     signingConfigs {

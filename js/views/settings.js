@@ -7,7 +7,7 @@
   const U = SAKU.util, UI = SAKU.ui;
   SAKU.views = SAKU.views || {};
   const Settings = { TICK: false };
-  const VERSION = '1.0.4';
+  const VERSION = '1.0.5';
 
   function permStatus() {
     if (!('Notification' in window)) {
