@@ -60,21 +60,71 @@ jobs:
         run: |
           set -euo pipefail
           APK=android/app/build/outputs/apk/debug/app-debug.apk
-          # sprite maskot harus ada dan berlatar transparan (color type 6 = RGBA),
-          # kalau tidak karakter akan tampil sebagai kotak putih
+          # Sprite maskot diperiksa sungguhan: latar harus transparan (keempat sudut
+          # alpha 0) dan tentu saja RGBA. Bug yang pernah lolos: mask pemotongan
+          # kepala/badan menimpa alpha sehingga sprite jadi persegi buram.
           python3 - <<'PY'
-          import glob, struct
+          import struct, zlib
+
+          def decode(path):
+              d = open(path, 'rb').read()
+              assert d[:8] == b'\x89PNG\r\n\x1a\n', 'bukan PNG'
+              pos, idat, ihdr = 8, b'', None
+              while pos < len(d):
+                  ln = struct.unpack('>I', d[pos:pos+4])[0]
+                  typ = d[pos+4:pos+8]
+                  data = d[pos+8:pos+8+ln]
+                  pos += 12 + ln
+                  if typ == b'IHDR': ihdr = data
+                  elif typ == b'IDAT': idat += data
+                  elif typ == b'IEND': break
+              w, h, bd, ct = struct.unpack('>IIBB', ihdr[:10])
+              assert bd == 8, 'kedalaman bit harus 8'
+              ch = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}.get(ct)
+              assert ch, 'tipe warna tidak didukung'
+              assert ct == 6, 'harus RGBA (tipe 6) supaya transparan'
+              raw, prev, out, i = zlib.decompress(idat), bytearray(w*ch), bytearray(), 0
+              stride = w*ch
+              for _ in range(h):
+                  f = raw[i]; i += 1
+                  line = bytearray(raw[i:i+stride]); i += stride
+                  if f == 1:
+                      for x in range(ch, stride): line[x] = (line[x] + line[x-ch]) & 255
+                  elif f == 2:
+                      for x in range(stride): line[x] = (line[x] + prev[x]) & 255
+                  elif f == 3:
+                      for x in range(stride):
+                          a = line[x-ch] if x >= ch else 0
+                          line[x] = (line[x] + ((a + prev[x]) >> 1)) & 255
+                  elif f == 4:
+                      for x in range(stride):
+                          a = line[x-ch] if x >= ch else 0
+                          b = prev[x]; c = prev[x-ch] if x >= ch else 0
+                          p = a + b - c
+                          pr = a if (abs(p-a) <= abs(p-b) and abs(p-a) <= abs(p-c)) else (b if abs(p-b) <= abs(p-c) else c)
+                          line[x] = (line[x] + pr) & 255
+                  out += line; prev = line
+              return w, h, out
+
           need = ['mascot.png', 'mascot_head.png', 'mascot_body.png', 'mascot_happy.png', 'mascot_alert.png']
           bad = []
           for name in need:
               p = 'android/app/src/main/res/drawable-nodpi/' + name
               try:
-                  d = open(p, 'rb').read()
-              except FileNotFoundError:
-                  bad.append(name + ' (hilang)')
+                  w, h, px = decode(p)
+              except Exception as e:
+                  bad.append(f'{name} ({e})')
                   continue
-              if d[:8] != b'\x89PNG\r\n\x1a\n' or d[25] != 6:
-                  bad.append(name + ' (bukan PNG RGBA transparan)')
+              def alpha(x, y):
+                  return px[(y*w + x)*4 + 3]
+              corners = [alpha(0,0), alpha(w-1,0), alpha(0,h-1), alpha(w-1,h-1)]
+              semi = sum(1 for y in range(0, h, 7) for x in range(0, w, 7) if alpha(x, y) == 0)
+              total = len(range(0, h, 7)) * len(range(0, w, 7))
+              print(f'{name}: {w}x{h} sudut_alpha={corners} kosong={100*semi/total:.0f}%')
+              if max(corners) > 10:
+                  bad.append(f'{name} (sudut tidak transparan → latar akan terlihat sebagai kotak)')
+              if semi == 0:
+                  bad.append(f'{name} (tidak ada piksel transparan sama sekali)')
           print('sprite maskot OK' if not bad else 'MASALAH: ' + ', '.join(bad))
           raise SystemExit(1 if bad else 0)
           PY

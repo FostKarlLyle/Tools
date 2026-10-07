@@ -5,7 +5,7 @@
  * ============================================================ */
 'use strict';
 
-const VERSION = 'v1.0.2';
+const VERSION = 'v1.0.3';
 const SHELL = 'saku-' + VERSION;
 
 const ASSETS = [
