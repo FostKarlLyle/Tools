@@ -13,14 +13,22 @@ Aplikasi Android native yang membungkus PWA Saku (WebView), dilengkapi **bubble 
 
 ## 📥 Cara mendapatkan APK (tanpa laptop!)
 
-APK di-build otomatis di cloud setiap ada perubahan kode, lewat GitHub Actions:
+APK di-build otomatis di cloud setiap ada perubahan kode, lewat GitHub Actions.
 
-1. Buka repo ini di GitHub → tab **Actions**
-2. Klik workflow run **"Build Android APK"** yang terbaru (status hijau ✅)
-3. Scroll ke bawah → **Artifacts** → unduh **saku-apk**
-4. File unduhan berupa ZIP — ekstrak, di dalamnya ada `app-debug.apk`
-5. Kirim APK ke HP-mu (atau unduh langsung dari browser HP), lalu buka untuk install
-6. Saat ditanya, izinkan **"Install dari sumber tidak dikenal"** (aman — ini aplikasimu sendiri)
+**Cara paling gampang — GitHub Releases:**
+
+1. Buka repo ini di GitHub → **Releases** (atau langsung: `/releases/latest`)
+2. Unduh **`saku-android.apk`** dari rilis **terbaru** (tag `build-<nomor>` paling besar)
+3. Buka file itu di HP → izinkan **"Install dari sumber tidak dikenal"** → install
+4. Buka aplikasi → **Pengaturan → Bubble Maskot** → pastikan tertulis **"Versi aplikasi Android: v…"** yang sesuai rilis terbaru
+
+**Alternatif — tab Actions (artifact):**
+
+1. Tab **Actions** → klik run **"Build Android APK"** terbaru (status hijau ✅)
+2. Scroll ke bawah → **Artifacts** → unduh **saku-apk**
+3. Isinya berupa ZIP — ekstrak dulu, file di dalamnya bernama `app-debug.apk`
+
+> ⚠️ Penting: artifact APK **tidak bisa di-install sebelum di-ekstrak**, dan artifact dari run lama tetap berisi APK lama. Kalau masih ragu, pakai rilis terbaru dan cek nomor versinya di dalam aplikasi.
 
 > Kamu juga bisa memicu build manual: tab Actions → "Build Android APK" → **Run workflow**.
 >
@@ -64,6 +72,22 @@ APK di-build otomatis di cloud setiap ada perubahan kode, lewat GitHub Actions:
 **Catatan data:** localStorage di WebView terpisah dari browser HP-mu. Pindahkan data dengan **Pengaturan → Data → Ekspor** di browser, lalu **Impor** di aplikasi.
 
 **Catatan AI:** chat AI butuh internet, sama seperti versi web. Kalau di dalam aplikasi chat gagal terus (keterbatasan `file://` origin di WebView pada beberapa perangkat), alternatifnya: aktifkan **API Kustom** di Pengaturan → Asisten AI, atau ganti URL muatan di `MainActivity.kt` ke alamat hosting HTTPS (mis. GitHub Pages).
+
+## 🧯 Kalau muncul "Halaman web / Webpage not available"
+
+Aplikasi membuka PWA-nya dari aset lokal di dalam APK (`assets/saku/index.html`). Kalau halaman itu tidak ditemukan, yang muncul adalah pesan error WebView.
+
+Sejak versi **1.0.1**, aplikasi menangani ini sendiri:
+
+- halaman dicari otomatis (`saku/index.html`, lalu `index.html`) — jadi salah satu layout tetap jalan;
+- kalau benar-benar tidak ada, muncul **halaman diagnosa** berisi versi aplikasi, URL yang dicoba, dan **daftar isi `assets/` di dalam APK** — foto layar itu dan kirim, penyebabnya langsung kelihatan;
+- pipeline build **menolak merilis APK** yang asetnya tidak lengkap, jadi rilis baru tidak akan pernah dalam keadaan rusak ini.
+
+Yang perlu dicek dulu di HP:
+
+1. **Versi terpasang.** Buka **Pengaturan → Bubble Maskot** (di dalam aplikasi) atau **Setelan HP → Aplikasi → Saku**. Kalau versinya masih `1.0.0`, APK lama masih terpasang — unduh ulang dari rilis terbaru.
+2. **Timpa, jangan menumpuk.** Semua APK CI memakai kunci tanda tangan yang sama, jadi cukup install di atas versi lama. Kalau dulu pernah memasang APK dari build paling awal, **uninstall sekali** lalu install yang baru.
+3. **Android System WebView.** Pastikan **Android System WebView** dan **Chrome** tidak dinonaktifkan: Setelan → Aplikasi → cari "Android System WebView" → aktifkan/update.
 
 ## 🛠️ Build lokal (opsional, kalau punya laptop)
 

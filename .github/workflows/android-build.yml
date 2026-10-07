@@ -1,7 +1,8 @@
 name: Build Android APK
 
 # Build APK Saku (pembungkus Android + bubble maskot) di cloud.
-# Hasilnya bisa diunduh sebagai artifact "saku-apk" dari tab Actions.
+# Hasilnya bisa diunduh sebagai artifact "saku-apk" dari tab Actions,
+# dan otomatis terbit di GitHub Releases sebagai tag build-<nomor>.
 on:
   push:
     branches:
@@ -40,8 +41,64 @@ jobs:
           unzip -q gradle.zip -d /opt
           /opt/gradle-8.7/bin/gradle --version
 
+      - name: Baca versi aplikasi
+        id: ver
+        run: |
+          VER=$(grep -oP "versionName '\K[^']+" android/app/build.gradle)
+          CODE=$(grep -oP "versionCode \K[0-9]+" android/app/build.gradle)
+          echo "name=$VER" >> "$GITHUB_OUTPUT"
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+          echo "Versi aplikasi: v$VER ($CODE)"
+
       - name: Build APK debug
         run: /opt/gradle-8.7/bin/gradle -p android assembleDebug --stacktrace --no-daemon
+
+      # Gagalkan build kalau aset web tidak benar-benar masuk ke dalam APK.
+      # Tujuannya: APK yang menampilkan "webpage not available" tidak pernah terbit
+      # sebagai rilis, dan penyebabnya kelihatan langsung di log.
+      - name: Verifikasi aset web di dalam APK
+        run: |
+          set -euo pipefail
+          APK=android/app/build/outputs/apk/debug/app-debug.apk
+          python3 - "$APK" > /tmp/apk-entries.txt <<'PY'
+          import sys, zipfile
+          with zipfile.ZipFile(sys.argv[1]) as z:
+              for n in sorted(z.namelist()):
+                  print(n)
+          PY
+          echo "=== aset aplikasi di dalam APK ==="
+          grep -E '^assets/' /tmp/apk-entries.txt || true
+          {
+            echo "### Isi \`assets/\` di dalam APK"
+            echo '```'
+            grep -E '^assets/' /tmp/apk-entries.txt || echo "(tidak ada folder assets)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          fail=0
+          for f in assets/saku/index.html \
+                   assets/saku/manifest.webmanifest \
+                   assets/saku/sw.js \
+                   assets/saku/styles/app.css \
+                   assets/saku/js/app.js \
+                   assets/saku/icons/icon-32.png; do
+            if grep -qx "$f" /tmp/apk-entries.txt; then
+              echo "OK    $f"
+            else
+              echo "::error::HILANG di dalam APK: $f"
+              fail=1
+            fi
+          done
+          # index.html harus benar-benar berisi aplikasi Saku (bukan file kosong)
+          python3 - "$APK" <<'PY'
+          import sys, zipfile
+          with zipfile.ZipFile(sys.argv[1]) as z:
+              info = z.getinfo('assets/saku/index.html')
+              data = z.read('assets/saku/index.html')
+          assert info.file_size > 500, 'assets/saku/index.html terlalu kecil'
+          assert b'Saku' in data, 'assets/saku/index.html bukan aplikasi Saku'
+          print('index.html di dalam APK:', info.file_size, 'byte')
+          PY
+          exit $fail
 
       - name: Upload APK (artifact "saku-apk")
         uses: actions/upload-artifact@v4
@@ -57,13 +114,44 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
-          name: Saku APK #${{ github.run_number }}
+          # tanda kutip wajib: tanpa itu YAML memotong teks setelah " #" sebagai komentar
+          name: "Saku APK v${{ steps.ver.outputs.name }} (build #${{ github.run_number }})"
           body: |
             📱 **Cara install:** unduh `saku-android.apk` di bawah → buka di HP → izinkan "install dari sumber tidak dikenal" → install.
 
             🔁 **Update:** kalau sudah pernah install versi bertanda tangan tetap, cukup timpa saja (data tidak hilang). Kalau baru pertama: install biasa.
 
             🫧 Aktifkan bubble maskot: buka Saku → Pengaturan → Bubble Maskot.
+
+            ---
+            **Versi aplikasi:** v${{ steps.ver.outputs.name }} (versionCode ${{ steps.ver.outputs.code }}) · commit `${{ github.sha }}`
+
+            Cara memastikan APK barunya benar terpasang: buka **Pengaturan → Bubble Maskot** di aplikasi (di situ tertulis "Versi aplikasi Android"), atau lihat **Setelan HP → Aplikasi → Saku**.
+
+            Aset web (PWA) ikut dipaket di dalam APK sebagai `assets/saku/` — aplikasi tetap jalan penuh tanpa internet untuk tugas & jadwal.
           files: saku-android.apk
           prerelease: true
           make_latest: true
+
+      # Laporan isi APK ditempel sebagai komentar commit supaya bisa diperiksa
+      # tanpa mengunduh APK/log Actions.
+      - name: Laporkan isi APK ke komentar commit
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          {
+            echo "### 🔎 Verifikasi isi APK build #${{ github.run_number }}"
+            echo
+            echo "APK dibangun dari commit \`${SHA:0:7}\` — versi v${{ steps.ver.outputs.name }}."
+            echo
+            echo '```'
+            grep -E '^assets/' /tmp/apk-entries.txt || echo "(tidak ada folder assets)"
+            echo '```'
+          } > /tmp/apk-report.md
+          gh api --method POST "repos/$REPO/commits/$SHA/comments" -f body="$(cat /tmp/apk-report.md)" > /dev/null
+          echo "Laporan verifikasi APK terkirim ke komentar commit."

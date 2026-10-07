@@ -3,6 +3,11 @@ plugins {
     id 'org.jetbrains.kotlin.android'
 }
 
+// Folder tujuan penyalinan aset web di dalam build dir modul (lihat copyWebAssets).
+// Isinya harus menjadi assets/saku/... di dalam APK — sama dengan URL yang dimuat
+// MainActivity (file:///android_asset/saku/index.html).
+def webAssetsDir = layout.buildDirectory.dir('webassets').get().asFile
+
 android {
     namespace 'com.saku.app'
     compileSdk 34
@@ -11,8 +16,10 @@ android {
         applicationId 'com.saku.app'
         minSdk 26
         targetSdk 34
-        versionCode 1
-        versionName '1.0.0'
+        // Naikkan versi setiap perbaikan supaya mudah dicek di HP:
+        // Pengaturan → Aplikasi → Saku → versi (atau di dalam app: Pengaturan → Bubble Maskot)
+        versionCode 2
+        versionName '1.0.1'
     }
 
     signingConfigs {
@@ -50,14 +57,17 @@ android {
 
     sourceSets {
         main {
-            // aset web (PWA Saku) disalin dari root repo saat build — satu sumber kebenaran
-            assets.srcDirs += files(layout.buildDirectory.dir('webassets'))
+            // aset web (PWA Saku) disalin dari root repo saat build — satu sumber kebenaran.
+            // Ditulis eksplisit (bukan `+=`) supaya hasil merge pasti masuk ke APK.
+            assets.srcDirs = [file('src/main/assets'), webAssetsDir]
         }
     }
 }
 
-// Salin aplikasi web Saku (root repo) → aset Android
-tasks.register('copyWebAssets', Copy) {
+// Salin aplikasi web Saku (root repo) → aset Android, menjadi assets/saku/... di dalam APK.
+// Sync (bukan Copy) supaya file aset lama yang sudah tidak ada ikut dibersihkan dan
+// tidak menumpuk di APK.
+tasks.register('copyWebAssets', Sync) {
     from(rootProject.projectDir.parentFile) {
         include 'index.html'
         include 'manifest.webmanifest'
@@ -66,7 +76,7 @@ tasks.register('copyWebAssets', Copy) {
         include 'js/**'
         include 'icons/**'
     }
-    into layout.buildDirectory.dir('webassets/saku')
+    into new File(webAssetsDir, 'saku')
 }
 preBuild.dependsOn 'copyWebAssets'
 

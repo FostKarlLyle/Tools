@@ -32,7 +32,19 @@
         : '<p class="hint bad">Izin "tampil di atas aplikasi lain" belum aktif</p>' +
           '<button class="btn btn-primary full" id="s-overlay">' + UI.icon('check', 17) + ' Izinkan overlay</button>') +
       UI.switchRow('s-bubble', 'Tampilkan bubble maskot', 'Melayang di tepi layar, bisa digeser-geser', on) +
+      nativeVersionHint() +
       '<p class="hint">Kalau bubble dihilangkan lewat notifikasi Android, nyalakan lagi dari sini.</p></section>';
+  }
+
+  /* versi aplikasi native — untuk memastikan APK yang terpasang sudah yang terbaru */
+  function nativeVersionHint() {
+    try {
+      if (window.SakuNative && typeof window.SakuNative.appVersion === 'function') {
+        const v = String(window.SakuNative.appVersion() || '').trim();
+        if (v && v !== '-') return '<p class="hint">Versi aplikasi Android: <strong>v' + v + '</strong></p>';
+      }
+    } catch (e) { /* bridge versi lama — lewati saja */ }
+    return '';
   }
 
   function installSection() {
