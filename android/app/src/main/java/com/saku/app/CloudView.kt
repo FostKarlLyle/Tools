@@ -31,14 +31,27 @@ class CloudView(context: Context) : View(context) {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val tint = Paint(Paint.ANTI_ALIAS_FLAG)
 
-    /** cx, cy, r (fraksi kotak bentuk) untuk setiap gumpalan. */
+    /**
+     * cx, cy, r (fraksi kotak bentuk) untuk setiap gumpalan.
+     *
+     * Tata letak ini dipilih lewat uji cakupan: seluruh baris sprite mulai 0,742H ke
+     * bawah (pita sambungan kepala/badan + potongan bawah sprite) HARUS tertutup awan
+     * di sepanjang lebar karakter — kalau tidak, potongan itu terlihat sebagai karakter
+     * yang pudar. Uji: tidak ada satu piksel pun menyembul di luar awan.
+     */
     private val puffs = listOf(
-        floatArrayOf(0.50f, 0.42f, 0.34f),   // gumpalan utama di tengah
-        floatArrayOf(0.25f, 0.52f, 0.25f),   // kiri
-        floatArrayOf(0.75f, 0.52f, 0.25f),   // kanan
-        floatArrayOf(0.07f, 0.62f, 0.15f),   // ujung kiri
-        floatArrayOf(0.93f, 0.62f, 0.15f)    // ujung kanan
+        floatArrayOf(0.50f, 0.16f, 0.19f),   // puncak tengah
+        floatArrayOf(0.30f, 0.20f, 0.17f),   // puncak kiri
+        floatArrayOf(0.70f, 0.20f, 0.17f),   // puncak kanan
+        floatArrayOf(0.15f, 0.26f, 0.20f),   // bahu kiri (lebar)
+        floatArrayOf(0.85f, 0.26f, 0.20f),   // bahu kanan (lebar)
+        floatArrayOf(0.30f, 0.58f, 0.22f),   // perut kiri
+        floatArrayOf(0.70f, 0.58f, 0.22f),   // perut kanan
+        floatArrayOf(0.50f, 0.62f, 0.26f)    // perut tengah
     )
+
+    /** Alas lebar (cx, cy, rx, ry) — menjamin cakupan penuh di zona potongan. */
+    private val baseOval = floatArrayOf(0.50f, 0.36f, 0.52f, 0.30f)
 
     init {
         // bayangan lembut butuh render software (khusus view kecil ini)
@@ -65,7 +78,12 @@ class CloudView(context: Context) : View(context) {
         }
         // alas lebar: bahu awan harus lebih tinggi daripada potongan bawah karakter,
         // jadi bagian bawah maskot selalu tertutup rapat di sepanjang lebarnya
-        path.addOval(x0 + 0.02f * bw, y0 + 0.28f * bh, x0 + 0.98f * bw, y0 + 0.80f * bh, Path.Direction.CW)
+        val o = baseOval
+        path.addOval(
+            x0 + (o[0] - o[2]) * bw, y0 + (o[1] - o[3]) * bh,
+            x0 + (o[0] + o[2]) * bw, y0 + (o[1] + o[3]) * bh,
+            Path.Direction.CW
+        )
 
         // awan putih + bayangan lembut ke bawah (masih di dalam batas view)
         paint.style = Paint.Style.FILL
@@ -79,9 +97,9 @@ class CloudView(context: Context) : View(context) {
         canvas.clipPath(path)
         tint.style = Paint.Style.FILL
         tint.color = 0x145B6B8C
-        canvas.drawOval(x0 - 0.10f * bw, y0 + 0.58f * bh, x1 + 0.10f * bw, y0 + 0.98f * bh, tint)
+        canvas.drawOval(x0 - 0.10f * bw, y0 + 0.55f * bh, x1 + 0.10f * bw, y0 + 0.95f * bh, tint)
         tint.color = 0x0F5B6B8C
-        canvas.drawOval(x0 - 0.10f * bw, y0 + 0.72f * bh, x1 + 0.10f * bw, y1 + 0.12f * bh, tint)
+        canvas.drawOval(x0 - 0.10f * bw, y0 + 0.70f * bh, x1 + 0.10f * bw, y1 + 0.12f * bh, tint)
         canvas.restore()
     }
 }

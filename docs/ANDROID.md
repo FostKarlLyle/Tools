@@ -77,7 +77,10 @@ Aturan tata letak (penting agar animasi tetap rapi — kepala dan badan harus pa
 - kanvas **424×472 px**, PNG transparan (RGBA)
 - isi karakter **352×400 px**, digambar di tengah: mulai **x = 36**, **y = 36**
 - sisi luar 36 px di setiap sisi **wajib transparan** — itu ruang untuk animasi (anggukan, napas, pantulan); kalau terisi, gerakan akan terpotong tepi jendela
-- `mascot_head`/`mascot_body` = hasil potong `mascot.png` pada pita **y = 64%-84%** dari kanvas
+- `mascot_head` = `mascot.png` dengan isi **di bawah y = 84% kanvas dihapus** (potongan keras, *tanpa* feathered alpha — alpha separuh jadi terlihat pudar di layar)
+- `mascot_body` = `mascot.png` dengan isi **di atas y = 79% kanvas dihapus**; kedua lapisan **tumpang-tindih 79%–84%** supaya saat kepala bergerak naik-turun tetap tidak ada celah transparan
+- kedua potongan itu **wajib** di belakang awan (awan menutupi penuh karakter mulai 74% tinggi): kalau tidak, garis potongnya terlihat
+- **jangan pernah** memberi alpha memudar (fade) pada sprite: kombinasi dua lapisan ber-fade menghasilkan alpha gabungan < 1 (mis. 0,75) sehingga seluruh karakter tampak tembus pandang
 
 Jendela bubble mengikuti karakter + awan: karakter tingginya **112 dp** (lebarnya ~101 dp), di bawahnya ada **awan** setinggi ~38 dp yang menutupi bagian bawah sprite — jadi kesannya maskot berdiri di atas awan, bukan terbang. Jendela overlay-nya ~136 × 135 dp, **tanpa latar apa pun**. Sentuhan hanya diterima di area karakter dan awan; tap di bagian transparan diteruskan ke aplikasi di bawahnya.
 
@@ -86,8 +89,10 @@ Awan digambar penuh dengan kode di `CloudView.kt` (gabungan gumpalan lingkaran +
 **Animasi:**
 - karakter naik-turun (±3 dp) dan bergoyang pelan — **awan tetap di tempat** sebagai jangkar
 - awan mengembang/mengempis tipis mengikuti turun-naiknya karakter (kesan memantul)
-- kepala mengangguk, badan bernapas, dan sesekali tersenyum sendiri saat menganggur
-- bagian bawah sprite (torso) dibuat **memudar** pada 80%–94% tinggi, supaya tidak ada garis potongan rata di sisi awan
+- kepala mengangguk + bergoyang berlapis dua frekuensi, badan bernapas, dan sesekali tersenyum sendiri saat menganggur
+- animasi dijalankan **loop sendiri ~30 fps** di `BubbleService` (`frameRunnable`), bukan `ValueAnimator`: tetap jalan walau opsi "hapus animasi" sistem aktif atau skala animator = 0, tidak bisa nyangkut seperti `pause()/resume()`, dan lebih hemat baterai
+- saat layar mati, loop animasi dijeda otomatis (`ACTION_SCREEN_OFF` → `startFrames()/stopFrames()`), hidup lagi saat layar menyala — jadi tidak ada gambar sia-sia saat HP di saku
+- bagian bawah sprite dipotong rapi **dan ditutup awan** pada 74%–92% tinggi — tidak ada fade, tidak ada garis potongan yang terlihat
 
 Cara termudah: kirim gambarmu (wajah menghadap depan, satu figur) lalu minta aku memprosesnya — pemotongan latar, pembuangan halo putih di tepi, penormalan ukuran, dan pemisahan kepala/badan bisa dilakukan otomatis.
 

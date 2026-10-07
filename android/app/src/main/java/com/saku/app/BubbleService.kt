@@ -27,7 +27,6 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.view.animation.AccelerateDecelerateInterpolator
-import android.view.animation.LinearInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
 import kotlin.math.abs
@@ -71,8 +70,19 @@ class BubbleService : Service() {
         /** Awan di bawah maskot (fraksi terhadap tinggi/lebar karakter). */
         private const val CLOUD_H_RATIO = 0.50f
         private const val CLOUD_W_RATIO = 1.15f
-        /** Posisi atas view awan terhadap tinggi karakter. */
-        private const val CLOUD_TOP_RATIO = 0.74f
+        /**
+         * Posisi atas view awan terhadap tinggi karakter. Awan dinaikkan sedikit supaya
+         * menutup PENUH pita sambungan kepala/badan dan potongan bawah sprite (sudah
+         * diverifikasi: tidak ada satu baris pun tubuh yang menyembul keluar awan).
+         */
+        private const val CLOUD_TOP_RATIO = 0.70f
+
+        /** Interval frame animasi (~30 fps: tetap halus, lebih hemat baterai). */
+        private const val FRAME_MS = 33L
+        /** Profil kedipan (detik): turun cepat, tahan sebentar, buka lebih lambat. */
+        private const val BLINK_DOWN = 0.07
+        private const val BLINK_HOLD = 0.05
+        private const val BLINK_UP = 0.14
 
         fun start(ctx: Context) {
             val i = Intent(ctx, BubbleService::class.java)
@@ -96,15 +106,28 @@ class BubbleService : Service() {
     private var bodyImg: ImageView? = null
     private var headImg: ImageView? = null
     private var lp: WindowManager.LayoutParams? = null
-    private var bobAnim: ValueAnimator? = null
     private var pulseReceiver: BroadcastReceiver? = null
+    private var screenReceiver: BroadcastReceiver? = null
 
     private val handler = Handler(Looper.getMainLooper())
     private var restoreJob: Runnable? = null
-    private var idleJob: Runnable? = null
-    private var blinkJob: Runnable? = null
-    private var blinkAnim: ValueAnimator? = null
     private val rnd = Random.Default
+
+    // --- mesin animasi (loop sendiri; lihat frameRunnable) ---
+    private var framesRunning = false
+    private var animT = 0.0
+    private var nextBlinkAt = 1.2
+    private var blinkT0 = -10.0
+    private var doubleBlinkAt = -1.0
+    private var nextIdleAt = 9.0
+    private var bounceT0 = -10.0
+    private var bounceDur = 0.6
+    private var bounceAmp = 0.14f
+    private var landT0 = -10.0
+    private var landDur = 0.3
+    private var landAmp = 0.10f
+    private var popT0 = -10.0
+    private var popDur = 0.24
 
     private var dragging = false
     private var baseY = 0
@@ -141,8 +164,26 @@ class BubbleService : Service() {
             @Suppress("UnspecifiedRegisterReceiverFlag")
             registerReceiver(pulseReceiver, filter)
         }
-        scheduleIdle()
-        scheduleBlink()
+        // layar mati → hentikan animasi (hemat baterai); layar hidup → lanjutkan
+        screenReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                when (intent?.action) {
+                    Intent.ACTION_SCREEN_OFF -> stopFrames()
+                    Intent.ACTION_SCREEN_ON -> startFrames()
+                }
+            }
+        }
+        val screenFilter = IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_ON)
+            addAction(Intent.ACTION_SCREEN_OFF)
+        }
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(screenReceiver, screenFilter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            registerReceiver(screenReceiver, screenFilter)
+        }
+        startFrames()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -151,17 +192,14 @@ class BubbleService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
+        // jaring pengaman: apa pun yang membuat loop berhenti, hidupkan lagi di sini
+        if (!framesRunning) startFrames()
         return START_STICKY
     }
 
     override fun onDestroy() {
-        bobAnim?.cancel()
-        bobAnim = null
-        blinkAnim?.cancel()
-        blinkAnim = null
+        stopFrames()
         restoreJob?.let { handler.removeCallbacks(it) }
-        idleJob?.let { handler.removeCallbacks(it) }
-        blinkJob?.let { handler.removeCallbacks(it) }
         bubble?.let {
             try { wm.removeView(it) } catch (e: Exception) { /* sudah lepas */ }
         }
@@ -173,6 +211,9 @@ class BubbleService : Service() {
         lidView = null
         headGroup = null
         pulseReceiver?.let {
+            try { unregisterReceiver(it) } catch (e: Exception) { /* belum terdaftar */ }
+        }
+        screenReceiver?.let {
             try { unregisterReceiver(it) } catch (e: Exception) { /* belum terdaftar */ }
         }
         super.onDestroy()
@@ -265,7 +306,7 @@ class BubbleService : Service() {
         wm.addView(frame, p)
         bubble = frame
         lp = p
-        startBobbing()
+        startFrames()
     }
 
     /**
@@ -332,7 +373,6 @@ class BubbleService : Service() {
                     startX = p.x
                     startY = baseY
                     downTime = ev.eventTime
-                    bobAnim?.pause()
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
@@ -349,7 +389,6 @@ class BubbleService : Service() {
                 }
                 MotionEvent.ACTION_UP -> {
                     dragging = false
-                    bobAnim?.resume()
                     val dt = ev.eventTime - downTime
                     when {
                         !moved && dt >= 550 -> {
@@ -363,12 +402,10 @@ class BubbleService : Service() {
                         }
                         else -> snapToEdge(v)
                     }
-                    scheduleIdle()
                     true
                 }
                 MotionEvent.ACTION_CANCEL -> {
                     dragging = false
-                    bobAnim?.resume()
                     snapToEdge(v)
                     true
                 }
@@ -400,117 +437,153 @@ class BubbleService : Service() {
         handler.postDelayed(job, durationMs)
     }
 
-    /** Sentakan kecil saat ekspresi berganti supaya terasa hidup. */
+    /** Sentakan kecil saat ekspresi berganti (dihitung di loop animasi). */
     private fun popExpression() {
-        val head = headImg ?: return
-        head.animate().cancel()
-        head.scaleX = 0.96f
-        head.scaleY = 0.96f
-        head.animate().scaleX(1f).scaleY(1f).setDuration(220)
-            .setInterpolator(AccelerateDecelerateInterpolator()).start()
+        popT0 = animT
+        popDur = 0.24
     }
+
+    /* ---------------- mesin animasi (loop sendiri, bukan animator sistem) ---------------- */
 
     /**
-     * Kedipan mata berkala: menutup cepat, tahan sebentar, lalu buka lebih lambat.
-     * Interval acak 2,5–7 detik; kadang diikuti kedipan kedua (double blink).
+     * Animasi dijalankan oleh loop Handler ~30 fps, bukan ValueAnimator. Alasannya:
+     * - tidak ikut mati saat pengguna mematikan animasi (mode hemat daya / opsi
+     *   "hapus animasi" membuat skala animator 0 → ValueAnimator melompat ke akhir);
+     * - tidak bisa "nyangkut" seperti pause()/resume() kalau gestur drag tidak selesai;
+     * - ~30 fps tetap halus untuk gerakan lambat dan lebih hemat baterai dari 60 fps.
+     * Semua posisi dihitung dari waktu berjalan (animT), jadi aman dijeda/dilanjutkan.
      */
-    private fun scheduleBlink() {
-        blinkJob?.let { handler.removeCallbacks(it) }
-        val delay = 2500L + rnd.nextLong(4500L)
-        val job = Runnable {
-            blink()
-            scheduleBlink()
-        }
-        blinkJob = job
-        handler.postDelayed(job, delay)
-    }
-
-    private fun blink() {
-        val lid = lidView ?: return
-        // jangan berkedip saat ekspresi khusus tampil (mata sudah tertutup di sprite)
-        if (bodyImg?.visibility != View.VISIBLE || dragging) return
-        blinkAnim?.cancel()
-        // 0 → 1 (62 ms) → tahan (25%) → 0 (125 ms)
-        blinkAnim = ValueAnimator.ofFloat(0f, 1f, 1f, 0f).apply {
-            duration = 250
-            addUpdateListener { a -> lid.closure = a.animatedValue as Float }
-            start()
-        }
-        // kadang kedip dua kali seperti orang berkedip alami
-        if (rnd.nextFloat() < 0.3f) {
-            handler.postDelayed({ blink() }, 300L)
-        }
-    }
-
-    /** Sesekali tersenyum sendiri saat sedang menganggur (supaya tidak terlihat kaku). */
-    private fun scheduleIdle() {
-        idleJob?.let { handler.removeCallbacks(it) }
-        val delay = 12000L + rnd.nextLong(14000L)   // 12–26 detik
-        val job = Runnable {
-            if (!dragging && bubble != null) {
-                react(R.drawable.mascot_happy, 1400)
-                bounce(soft = true)
+    private val frameRunnable = object : Runnable {
+        override fun run() {
+            if (!framesRunning) return
+            try {
+                applyFrame(animT)
+            } catch (e: Exception) {
+                // satu frame gagal tidak boleh mematikan service
             }
-            scheduleIdle()
+            animT += FRAME_MS / 1000.0
+            if (framesRunning) handler.postDelayed(this, FRAME_MS)
         }
-        idleJob = job
-        handler.postDelayed(job, delay)
     }
 
-    /* ---------------- animasi ---------------- */
+    private fun startFrames() {
+        if (framesRunning) return
+        framesRunning = true
+        handler.postDelayed(frameRunnable, FRAME_MS)
+    }
 
-    /**
-     * Animasi utama: bubble melayang (bobbing) + goyang kecil, kepala mengangguk,
-     * badan bernapas. Semua bersumbu sama supaya gerakannya terasa satu tubuh.
-     */
-    private fun startBobbing() {
-        val ampY = dp(3.2f).toFloat()        // naik-turun karakter di atas awan
-        val ampRot = 1.6f                    // goyang karakter (derajat)
-        val headNod = dp(2.2f).toFloat()     // anggukan kepala
-        val breath = 0.018f                  // "napas" badan
+    private fun stopFrames() {
+        framesRunning = false
+        handler.removeCallbacks(frameRunnable)
+    }
 
-        bobAnim = ValueAnimator.ofFloat(0f, (Math.PI * 2).toFloat()).apply {
-            duration = 2600
-            repeatCount = ValueAnimator.INFINITE
-            interpolator = LinearInterpolator()
-            addUpdateListener { anim ->
-                val t = (anim.animatedValue as Float).toDouble()
-                setupPivotsOnce()
-                if (!dragging) {
-                    // Jendela TIDAK bergerak: awan tetap di tempatnya, hanya karakter
-                    // yang naik-turun dan bergoyang — kesannya berdiri di atas awan.
-                    val offset = (sin(t) * ampY).toFloat()
-                    moverView?.let { m ->
-                        m.translationY = offset
-                        m.rotation = (sin(t + 1.1) * ampRot).toFloat()
-                    }
-                    // awan mengembang/mengempis mengikuti turun-naiknya karakter
-                    cloudView?.let { c ->
-                        val press = ((sin(t) + 1.0) / 2.0).toFloat()   // 0..1 saat karakter turun
-                        c.scaleY = 1f - 0.06f * press
-                        c.scaleX = 1f + 0.045f * press
-                        c.rotation = (sin(t * 0.5 + 0.4) * 0.7).toFloat()
-                    }
-                    // kepala bergerak berlapis: anggukan cepat + goyangan lambat + geser
-                    // samping pelan (dua frekuensi berbeda → terasa hidup, tidak monoton)
-                    val swayX = dp(1.5f).toFloat()
-                    val slowY = dp(1.2f).toFloat()
-                    headGroup?.let { h ->
-                        h.translationY = (sin(t + 0.8) * headNod - headNod * 0.4 +
-                                          sin(t * 0.43 + 2.1) * slowY).toFloat()
-                        h.translationX = (sin(t * 0.37 + 0.5) * swayX).toFloat()
-                        h.rotation = (sin(t + 1.9) * 1.6 + sin(t * 0.53 + 0.7) * 2.2).toFloat()
-                    }
-                    // badan bernapas (dua kali lebih cepat dari bobbing)
-                    bodyImg?.let { bd ->
-                        val s = (0.5 + 0.5 * sin(2 * t))
-                        bd.scaleY = (1f - breath * s).toFloat()
-                        bd.scaleX = (1f + 0.012f * s).toFloat()
-                    }
+    /** Satu frame animasi; t = detik sejak loop mulai berjalan. */
+    private fun applyFrame(t: Double) {
+        setupPivotsOnce()
+        val m = moverView ?: return
+        val w2 = 2.0 * Math.PI
+
+        // 1) karakter naik-turun di atas awan + goyang kecil
+        val bob = t * w2 / 2.6
+        val ampY = dp(3.2f).toDouble()
+        m.translationY = (sin(bob) * ampY).toFloat()
+        m.rotation = (sin(bob + 1.1) * 1.6).toFloat()
+
+        // 2) awan mengembang-mengempis mengikuti turun-naiknya karakter
+        val press = ((sin(bob) + 1.0) / 2.0).toFloat()
+        cloudView?.let { c ->
+            c.scaleY = 1f - 0.06f * press
+            c.scaleX = 1f + 0.045f * press
+            c.rotation = (sin(t * w2 / 5.2 + 0.4) * 0.7).toFloat()
+        }
+
+        // 3) kepala bergerak berlapis (dua frekuensi berbeda → tidak monoton)
+        val headNod = dp(2.2f).toDouble()
+        val swayX = dp(1.5f).toDouble()
+        val slowY = dp(1.2f).toDouble()
+        headGroup?.let { h ->
+            h.translationY = (sin(bob + 0.8) * headNod - headNod * 0.4 +
+                              sin(t * w2 / 6.0 + 2.1) * slowY).toFloat()
+            h.translationX = (sin(t * w2 / 7.0 + 0.5) * swayX).toFloat()
+            h.rotation = (sin(bob + 1.9) * 1.6 + sin(t * w2 / 4.9 + 0.7) * 2.2).toFloat()
+        }
+
+        // 4) badan bernapas
+        bodyImg?.let { bd ->
+            val s = (0.5 + 0.5 * sin(bob * 2)).toFloat()
+            bd.scaleY = 1f - 0.018f * s
+            bd.scaleX = 1f + 0.012f * s
+        }
+
+        // 5) efek sesaat: pantulan / mendarat / sentakan ekspresi
+        var scale = 1f
+        var scaleX = 1f
+        var scaleY = 1f
+        val b = pulseValue(t, bounceT0, bounceDur)
+        if (b != 0f) scale = 1f + bounceAmp * b
+        val l = pulseValue(t, landT0, landDur)
+        if (l != 0f) {
+            scaleX *= 1f + landAmp * 0.9f * l
+            scaleY *= 1f - landAmp * 0.8f * l
+        }
+        m.scaleX = scaleX * scale
+        m.scaleY = scaleY * scale
+        val settle = settleValue(t, popT0, popDur)
+        headGroup?.let { h ->
+            h.scaleX = settle
+            h.scaleY = settle
+        }
+
+        // 6) kedipan mata (turun cepat → tahan → buka lebih lambat)
+        lidView?.let { lid ->
+            if (bodyImg?.visibility == View.VISIBLE) {
+                if (t >= nextBlinkAt) {
+                    blinkT0 = t
+                    nextBlinkAt = t + 2.5 + rnd.nextDouble() * 4.5
+                    // kadang berkedip dua kali seperti orang asli
+                    if (rnd.nextFloat() < 0.3f) doubleBlinkAt = t + 0.32
                 }
+                if (doubleBlinkAt > 0 && t >= doubleBlinkAt) {
+                    doubleBlinkAt = -1.0
+                    blinkT0 = t
+                }
+                lid.closure = blinkCurve(t - blinkT0)
+            } else {
+                lid.closure = 0f
             }
-            start()
         }
+
+        // 7) sesekali tersenyum sendiri saat menganggur
+        if (!dragging && t >= nextIdleAt) {
+            nextIdleAt = t + 12.0 + rnd.nextDouble() * 14.0
+            react(R.drawable.mascot_happy, 1400)
+            bounce(soft = true)
+        }
+    }
+
+    /** Bentuk 0 → 1 → 0 (pantulan); 0 kalau waktu di luar rentang. */
+    private fun pulseValue(t: Double, t0: Double, dur: Double): Float {
+        if (t0 < 0) return 0f
+        val p = (t - t0) / dur
+        return if (p < 0.0 || p > 1.0) 0f else (sin(p * 2.0 * Math.PI) * (1.0 - p)).toFloat()
+    }
+
+    /** 0,96 → 1,0 dengan mulus (sentakan saat ekspresi berganti). */
+    private fun settleValue(t: Double, t0: Double, dur: Double): Float {
+        if (t0 < 0) return 1f
+        val p = ((t - t0) / dur).coerceIn(0.0, 1.0)
+        val eased = 1.0 - Math.pow(1.0 - p, 3.0)
+        return (0.96 + 0.04 * eased).toFloat()
+    }
+
+    /** Profil kedipan: 0 = mata terbuka, 1 = terpejam. */
+    private fun blinkCurve(dt: Double): Float = when {
+        dt < 0 -> 0f
+        dt < BLINK_DOWN -> (dt / BLINK_DOWN).toFloat()
+        dt < BLINK_DOWN + BLINK_HOLD -> 1f
+        dt < BLINK_DOWN + BLINK_HOLD + BLINK_UP ->
+            (1.0 - (dt - BLINK_DOWN - BLINK_HOLD) / BLINK_UP).toFloat()
+        else -> 0f
     }
 
     /**
@@ -560,47 +633,18 @@ class BubbleService : Service() {
         }
     }
 
-    /** Efek "mendarat" — dikenakan ke wadah karakter (bukan jendela) supaya tidak terpotong. */
+    /** Efek "mendarat" setelah digeser (dihitung di loop animasi). */
     private fun land() {
-        val v = moverView ?: return
-        ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = 300
-            addUpdateListener { a ->
-                val t = a.animatedValue as Float
-                val s = sin((t * Math.PI).toDouble()).toFloat()
-                v.scaleX = 1f + s * 0.10f
-                v.scaleY = 1f - s * 0.08f
-            }
-            addListener(object : AnimatorListenerAdapter() {
-                override fun onAnimationEnd(animation: Animator) {
-                    v.scaleX = 1f
-                    v.scaleY = 1f
-                }
-            })
-            start()
-        }
+        landT0 = animT
+        landDur = 0.3
+        landAmp = 0.10f
     }
 
-    /** Pantulan gembira (atau lembut untuk gestur idle) saat ada notifikasi. */
+    /** Pantulan gembira (atau lembut saat gestur idle) — dihitung di loop animasi. */
     private fun bounce(soft: Boolean = false) {
-        val v = moverView ?: return
-        val strength = if (soft) 0.08f else 0.14f
-        ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = if (soft) 420 else 600
-            addUpdateListener { a ->
-                val t = a.animatedValue as Float
-                val s = sin((t * Math.PI * 2).toDouble()).toFloat() * (1f - t)
-                v.scaleX = 1f + s * strength
-                v.scaleY = 1f + s * strength
-            }
-            addListener(object : AnimatorListenerAdapter() {
-                override fun onAnimationEnd(animation: Animator) {
-                    v.scaleX = 1f
-                    v.scaleY = 1f
-                }
-            })
-            start()
-        }
+        bounceT0 = animT
+        bounceDur = if (soft) 0.42 else 0.6
+        bounceAmp = if (soft) 0.08f else 0.14f
     }
 
     /* ---------------- util ---------------- */

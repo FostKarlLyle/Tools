@@ -130,6 +130,67 @@ jobs:
                   bad.append(f'{name} (tepi tidak transparan → gerakan animasi akan terpotong)')
               if semi == 0:
                   bad.append(f'{name} (tidak ada piksel transparan sama sekali)')
+          # Pita alpha menengah = karakter tampak pudar. Regresi v1.0.7: fade 72%-88%
+          # menyisakan alpha 34-184 di bagian tubuh yang tidak tertutup awan.
+          def faded_runs(px, w, h):
+              runs, s, pp = [], None, None
+              for y in range(h):
+                  content = [px[(y*w+x)*4+3] for x in range(w) if px[(y*w+x)*4+3] > 0]
+                  if len(content) < 20:
+                      continue
+                  semi = sum(1 for a in content if 20 < a < 210)
+                  if semi / len(content) > 0.20:
+                      if s is None: s = pp = y
+                      elif y == pp + 1: pp = y
+                      else:
+                          runs.append((s, pp)); s = pp = y
+              if s is not None: runs.append((s, pp))
+              return [r for r in runs if r[1] - r[0] + 1 >= 6]
+
+          for name in need:
+              w, h, px = decode('android/app/src/main/res/drawable-nodpi/' + name)
+              runs = faded_runs(px, w, h)
+              if runs:
+                  bad.append(f'{name} (pita alpha menengah/pudar di baris {runs} — gunakan potongan keras, jangan alpha memudar)')
+
+          # Gabungan lapisan kepala + badan tidak boleh lebih tembus daripada sprite utuh.
+          w, h, full = decode('android/app/src/main/res/drawable-nodpi/mascot.png')
+          _, _, head = decode('android/app/src/main/res/drawable-nodpi/mascot_head.png')
+          _, _, body = decode('android/app/src/main/res/drawable-nodpi/mascot_body.png')
+          dim = 0
+          for y in range(h):
+              for x in range(w):
+                  i = (y*w + x)*4 + 3
+                  a, ah, ab = full[i]/255.0, head[i]/255.0, body[i]/255.0
+                  if ah + ab*(1-ah) < a - 0.02: dim += 1
+          print(f'lapisan kepala+badan: piksel lebih tembus dari aslinya = {dim}')
+          if dim:
+              bad.append(f'mascot_head/mascot_body membuat {dim} piksel tembus pandang (pudar)')
+
+          # Awan wajib menutup penuh bagian bawah karakter (pita sambungan + potongan).
+          # Geometri di bawah ini harus SAMA dengan CloudView.kt + BubbleService.kt.
+          def in_cloud(xs, ys):
+              view_w, view_h = 352.0*1.15, 472.0*0.50
+              vl, vt = (424.0 - view_w)/2.0, 472.0*0.70
+              bx, by = 0.06*view_w, 0.03*view_h
+              bw, bh = view_w*0.88, view_h*0.83
+              x, y = xs - vl, ys - vt
+              for cx, cy, r in [(0.50,0.16,0.19),(0.30,0.20,0.17),(0.70,0.20,0.17),
+                                (0.15,0.26,0.20),(0.85,0.26,0.20),
+                                (0.30,0.58,0.22),(0.70,0.58,0.22),(0.50,0.62,0.26)]:
+                  if (x-(bx+cx*bw))**2 + (y-(by+cy*bh))**2 <= (r*bh)**2:
+                      return True
+              ox, oy, orx, ory = 0.50, 0.36, 0.52, 0.30
+              return ((x-(bx+ox*bw))/(orx*bw))**2 + ((y-(by+oy*bh))/(ory*bh))**2 <= 1.0
+
+          for name in ['mascot.png', 'mascot_happy.png', 'mascot_alert.png']:
+              w, h, px = decode('android/app/src/main/res/drawable-nodpi/' + name)
+              exposed = [(y, x) for y in range(int(0.80*h), h, 2) for x in range(w)
+                         if px[(y*w+x)*4+3] > 0 and not in_cloud(x, y)]
+              print(f"{name}: piksel di luar awan (baris >= {int(0.80*h)}) = {len(exposed)}")
+              if exposed:
+                  bad.append(f'{name} menyembul {len(exposed)} piksel di luar awan {exposed[:2]} (awan kurang lebar/rendah)')
+
           print('sprite maskot OK' if not bad else 'MASALAH: ' + ', '.join(bad))
           raise SystemExit(1 if bad else 0)
           PY
