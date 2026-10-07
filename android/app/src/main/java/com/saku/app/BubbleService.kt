@@ -69,8 +69,8 @@ class BubbleService : Service() {
         private const val CHAR_W = 352f
         private const val CHAR_H = 400f
         /** Awan di bawah maskot (fraksi terhadap tinggi/lebar karakter). */
-        private const val CLOUD_H_RATIO = 0.45f
-        private const val CLOUD_W_RATIO = 1.35f
+        private const val CLOUD_H_RATIO = 0.50f
+        private const val CLOUD_W_RATIO = 1.15f
         /** Posisi atas view awan terhadap tinggi karakter. */
         private const val CLOUD_TOP_RATIO = 0.74f
 
