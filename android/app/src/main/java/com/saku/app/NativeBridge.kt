@@ -14,6 +14,16 @@ class NativeBridge(private val activity: MainActivity) {
     @JavascriptInterface
     fun platform(): String = "android-native"
 
+    /** Versi aplikasi Android (versionName) — ditampilkan di Pengaturan supaya jelas APK mana yang terpasang. */
+    @JavascriptInterface
+    fun appVersion(): String = activity.appVersion()
+
+    /** Coba muat lagi halaman utama (dipakai tombol "Coba lagi" di halaman diagnosa). */
+    @JavascriptInterface
+    fun retryLoad() {
+        activity.runOnUiThread { activity.retryLoad() }
+    }
+
     @JavascriptInterface
     fun isOverlayAllowed(): Boolean = Settings.canDrawOverlays(activity)
 

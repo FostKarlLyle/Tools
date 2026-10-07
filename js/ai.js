@@ -80,13 +80,98 @@
     return lines.join('\n');
   };
 
-  /* ---------- fetch dengan timeout ---------- */
-  function fetchTimeout(url, opts, ms) {
-    opts = opts || {};
+  /* ---------- transport: lewat native Android (kalau ada) atau fetch biasa ---------- */
+  // Di aplikasi Android permintaan dikirim lewat jembatan native (SakuHttp) supaya tidak
+  // tersangkut batasan origin file:// di WebView (inilah yang bikin chat gagal di APK).
+  // Di browser tetap memakai fetch biasa.
+  let nativeSeq = 0;
+  const nativePending = {};
+
+  window.__sakuHttp = function (id, res) {
+    const p = nativePending[id];
+    if (!p) return;
+    delete nativePending[id];
+    res = res || {};
+    if (res.error && !res.status) p.reject(new Error('native: ' + res.error));
+    else p.resolve({ status: res.status || 0, text: res.body || '' });
+  };
+
+  function nativeHttp(method, url, headers, body) {
+    return new Promise(function (resolve, reject) {
+      if (!window.SakuHttp || typeof window.SakuHttp.post !== 'function') {
+        reject(new Error('jembatan native tidak tersedia'));
+        return;
+      }
+      const id = 'r' + (++nativeSeq) + '-' + Date.now();
+      const timer = setTimeout(function () {
+        if (nativePending[id]) { delete nativePending[id]; reject(new Error('timeout native (70 detik)')); }
+      }, 70000);
+      nativePending[id] = {
+        resolve: function (v) { clearTimeout(timer); resolve(v); },
+        reject: function (e) { clearTimeout(timer); reject(e); }
+      };
+      try {
+        if (method === 'GET') window.SakuHttp.get(id, url, JSON.stringify(headers || {}));
+        else window.SakuHttp.post(id, url, JSON.stringify(headers || {}), body || '');
+      } catch (e) {
+        clearTimeout(timer);
+        delete nativePending[id];
+        reject(e);
+      }
+    });
+  }
+
+  function fetchHttp(method, url, headers, body, timeoutMs) {
+    const h = {};
+    Object.keys(headers || {}).forEach(function (k) { if (headers[k]) h[k] = headers[k]; });
     const ctrl = new AbortController();
-    const t = setTimeout(function () { ctrl.abort(); }, ms || 45000);
-    opts.signal = ctrl.signal;
-    return fetch(url, opts).finally(function () { clearTimeout(t); });
+    const t = setTimeout(function () { ctrl.abort(); }, timeoutMs || 45000);
+    const opts = { method: method, headers: h, signal: ctrl.signal };
+    if (method !== 'GET' && body) opts.body = body;
+    return fetch(url, opts).then(function (res) {
+      return res.text().then(function (text) { return { status: res.status, text: text }; });
+    }).finally(function () { clearTimeout(t); });
+  }
+
+  /**
+   * Kirim permintaan HTTP. Selalu mengembalikan { status, text } supaya status bisa
+   * dilaporkan apa adanya, dan error jaringan dilempar dengan alasan yang jelas.
+   */
+  AI.request = async function (method, url, headers, body, timeoutMs) {
+    const viaNative = !!(window.SakuHttp && typeof window.SakuHttp.post === 'function');
+    let res;
+    try {
+      res = viaNative
+        ? await nativeHttp(method, url, headers, body)
+        : await fetchHttp(method, url, headers, body, timeoutMs);
+    } catch (e) {
+      const msg = (e && e.name === 'AbortError') ? 'timeout' : ((e && e.message) || String(e));
+      throw new Error((viaNative ? 'jaringan (native)' : 'jaringan') + ': ' + msg);
+    }
+    AI.lastTransport = viaNative ? 'native' : 'fetch';
+    return res;
+  };
+
+  /* ---------- daftar model gratis yang dicoba berurutan ---------- */
+  function modelChain(model) {
+    const out = [];
+    function add(m) {
+      m = (m || '').trim();
+      if (m && out.indexOf(m) < 0) out.push(m);
+    }
+    add(model);
+    add('openai');
+    add('mistral');
+    add('openai-fast');
+    return out;
+  }
+
+  function safeJson(text) {
+    const t = (text || '').trim();
+    if (t.startsWith('{') || t.startsWith('[')) {
+      try { return JSON.parse(t); } catch (e) { return null; }
+    }
+    return null;
   }
 
   /* ---------- ekstrak teks dari berbagai bentuk respons ---------- */
@@ -108,37 +193,51 @@
 
   async function parseResponse(res) {
     const txt = await res.text();
-    let data = null;
-    const trimmed = txt.trim();
-    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-      try { data = JSON.parse(trimmed); } catch (e) { /* biarkan null */ }
-    }
-    return extractText(data, trimmed);
+    return extractText(safeJson(txt), txt);
   }
 
   /* ---------- penyedia: Pollinations (gratis, tanpa key) ---------- */
+  // Parameter referrer = identitas aplikasi untuk tier anonim (sesuai dokumentasi
+  // Pollinations: pemakaian dari aplikasi/browser sebaiknya menyertakan referrer).
+  const POLL_REFERRER = 'saku-android';
+  const POLL_REF = 'referrer=' + POLL_REFERRER;
+
   async function viaPollinationsOpenAI(messages, model) {
-    const res = await fetchTimeout('https://text.pollinations.ai/openai', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: model || 'openai', messages: messages, temperature: 0.4 })
-    }, 45000);
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const out = await parseResponse(res);
-    if (!out) throw new Error('Respons kosong');
-    return out;
+    const errors = [];
+    for (let i = 0; i < modelChain(model).length; i++) {
+      const m = modelChain(model)[i];
+      const res = await AI.request(
+        'POST',
+        'https://text.pollinations.ai/openai?' + POLL_REF,
+        { 'Content-Type': 'application/json' },
+        JSON.stringify({ model: m, messages: messages, temperature: 0.4, referrer: POLL_REFERRER }),
+        45000
+      );
+      if (res.status < 200 || res.status >= 300) { errors.push(m + ' → HTTP ' + res.status); continue; }
+      const out = extractText(safeJson(res.text), res.text);
+      if (!out) { errors.push(m + ' → respons kosong'); continue; }
+      return out;
+    }
+    throw new Error('model gratis ditolak (' + errors.join('; ') + ')');
   }
 
   async function viaPollinationsPlain(messages, model) {
-    const res = await fetchTimeout('https://text.pollinations.ai/', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: model || 'openai', messages: messages })
-    }, 45000);
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const out = (await res.text()).trim();
-    if (!out) throw new Error('Respons kosong');
-    return out;
+    const errors = [];
+    const chain = modelChain(model).slice(0, 2);
+    for (let i = 0; i < chain.length; i++) {
+      const res = await AI.request(
+        'POST',
+        'https://text.pollinations.ai/?' + POLL_REF,
+        { 'Content-Type': 'application/json' },
+        JSON.stringify({ model: chain[i], messages: messages, referrer: POLL_REFERRER }),
+        45000
+      );
+      if (res.status < 200 || res.status >= 300) { errors.push(chain[i] + ' → HTTP ' + res.status); continue; }
+      const out = (res.text || '').trim();
+      if (!out) { errors.push(chain[i] + ' → respons kosong'); continue; }
+      return out;
+    }
+    throw new Error('jalur teks ditolak (' + errors.join('; ') + ')');
   }
 
   async function viaPollinationsGET(system, messages, model) {
@@ -150,37 +249,46 @@
     convo += 'Asisten:';
     let prompt = system + '\n\n=== Percakapan ===\n' + convo;
     if (prompt.length > 6000) prompt = prompt.slice(0, 2000) + '\n...\n' + prompt.slice(-3800);
-    const url = 'https://text.pollinations.ai/' + encodeURIComponent(prompt) +
-                '?model=' + encodeURIComponent(model || 'openai');
-    const res = await fetchTimeout(url, {}, 45000);
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const out = (await res.text()).trim();
-    if (!out) throw new Error('Respons kosong');
-    return out;
+    const errors = [];
+    const chain = modelChain(model).slice(0, 2);
+    for (let i = 0; i < chain.length; i++) {
+      const url = 'https://text.pollinations.ai/' + encodeURIComponent(prompt) +
+                  '?model=' + encodeURIComponent(chain[i]) + '&' + POLL_REF;
+      const res = await AI.request('GET', url, {}, null, 45000);
+      if (res.status < 200 || res.status >= 300) { errors.push(chain[i] + ' → HTTP ' + res.status); continue; }
+      const out = (res.text || '').trim();
+      if (!out) { errors.push(chain[i] + ' → respons kosong'); continue; }
+      return out;
+    }
+    throw new Error('jalur GET ditolak (' + errors.join('; ') + ')');
   }
 
   /* ---------- penyedia: kustom (OpenAI-compatible) ---------- */
   async function viaCustom(messages, cfg) {
     const base = (cfg.baseUrl || '').trim().replace(/\/+$/, '');
     if (!base) throw new Error('Base URL belum diisi. Atur di Pengaturan → AI.');
-    const res = await fetchTimeout(base + '/chat/completions', {
-      method: 'POST',
-      headers: {
+    const res = await AI.request(
+      'POST',
+      base + '/chat/completions',
+      {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer ' + (cfg.apiKey || '')
       },
-      body: JSON.stringify({
+      JSON.stringify({
         model: (cfg.customModel || '').trim() || 'gpt-4o-mini',
         messages: messages,
         temperature: 0.4
-      })
-    }, 45000);
-    if (!res.ok) {
+      }),
+      45000
+    );
+    if (res.status < 200 || res.status >= 300) {
       let extra = '';
-      try { const j = await res.json(); extra = (j.error && j.error.message) ? ': ' + j.error.message : ''; } catch (e) {}
+      const j = safeJson(res.text);
+      if (j && j.error && j.error.message) extra = ': ' + j.error.message;
+      else if (res.text) extra = ': ' + res.text.slice(0, 160);
       throw new Error('HTTP ' + res.status + extra);
     }
-    const out = await parseResponse(res);
+    const out = extractText(safeJson(res.text), res.text);
     if (!out) throw new Error('Respons kosong');
     return out;
   }
@@ -210,6 +318,7 @@
     attempts.push(['Pollinations (GET)', function () { return viaPollinationsGET(system, history, cfg.model); }]);
 
     let err = null;
+    const gagalDi = [];
     for (let i = 0; i < attempts.length; i++) {
       try {
         const out = await attempts[i][1]();
@@ -218,25 +327,49 @@
       } catch (e) {
         err = e;
         const msg = (e && e.name === 'AbortError') ? 'timeout (45 detik)' : (e && e.message) || String(e);
+        gagalDi.push(attempts[i][0] + ': ' + msg);
         console.warn('[Saku AI] gagal via ' + attempts[i][0] + ':', msg);
       }
     }
     AI.lastError = err;
+    AI.lastDetail = gagalDi.join(' | ');
     throw err || new Error('Semua jalur AI gagal');
   };
 
   /* ---------- tes koneksi (dipakai di Pengaturan) ---------- */
+  // Mengembalikan rincian tiap jalur supaya jelas jalur mana yang gagal dan kenapa.
   AI.test = async function () {
     const cfg = SAKU.store.data.settings.ai;
     const probe = [{ role: 'user', content: 'Balas dengan satu kata: OK' }];
+    const sys = [{ role: 'system', content: 'Kamu asisten uji koneksi. Jawab sangat singkat.' }];
     const t0 = Date.now();
-    if (cfg.provider === 'custom') {
-      const out = await viaCustom([{ role: 'system', content: 'Kamu asisten uji koneksi.' }].concat(probe), cfg);
-      return { ok: true, ms: Date.now() - t0, via: 'API kustom', sample: (out || '').slice(0, 80) };
+    const detail = [];
+
+    const chain = [];
+    if (cfg.provider === 'custom') chain.push(['API kustom', function () { return viaCustom(sys.concat(probe), cfg); }]);
+    chain.push(['Pollinations', function () { return viaPollinationsOpenAI(sys.concat(probe), cfg.model); }]);
+    chain.push(['Pollinations (teks)', function () { return viaPollinationsPlain(sys.concat(probe), cfg.model); }]);
+
+    for (let i = 0; i < chain.length; i++) {
+      try {
+        const out = await chain[i][1]();
+        detail.push('✅ ' + chain[i][0] + ' berhasil');
+        return {
+          ok: true,
+          ms: Date.now() - t0,
+          via: chain[i][0],
+          sample: (out || '').slice(0, 80),
+          transport: AI.lastTransport || '-',
+          detail: detail
+        };
+      } catch (e) {
+        detail.push('❌ ' + chain[i][0] + ': ' + ((e && e.message) || 'gagal'));
+      }
     }
-    const out = await viaPollinationsOpenAI(
-      [{ role: 'system', content: 'Kamu asisten uji koneksi. Jawab sangat singkat.' }].concat(probe), cfg.model);
-    return { ok: true, ms: Date.now() - t0, via: 'Pollinations', sample: (out || '').slice(0, 80) };
+    const err = new Error(detail.join('\n'));
+    err.detail = detail;
+    err.transport = AI.lastTransport || '-';
+    throw err;
   };
 
   /* ---------- ambil blok aksi dari jawaban AI ---------- */

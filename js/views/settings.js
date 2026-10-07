@@ -7,7 +7,7 @@
   const U = SAKU.util, UI = SAKU.ui;
   SAKU.views = SAKU.views || {};
   const Settings = { TICK: false };
-  const VERSION = '1.0.0';
+  const VERSION = '1.0.8';
 
   function permStatus() {
     if (!('Notification' in window)) {
@@ -32,7 +32,19 @@
         : '<p class="hint bad">Izin "tampil di atas aplikasi lain" belum aktif</p>' +
           '<button class="btn btn-primary full" id="s-overlay">' + UI.icon('check', 17) + ' Izinkan overlay</button>') +
       UI.switchRow('s-bubble', 'Tampilkan bubble maskot', 'Melayang di tepi layar, bisa digeser-geser', on) +
+      nativeVersionHint() +
       '<p class="hint">Kalau bubble dihilangkan lewat notifikasi Android, nyalakan lagi dari sini.</p></section>';
+  }
+
+  /* versi aplikasi native — untuk memastikan APK yang terpasang sudah yang terbaru */
+  function nativeVersionHint() {
+    try {
+      if (window.SakuNative && typeof window.SakuNative.appVersion === 'function') {
+        const v = String(window.SakuNative.appVersion() || '').trim();
+        if (v && v !== '-') return '<p class="hint">Versi aplikasi Android: <strong>v' + v + '</strong></p>';
+      }
+    } catch (e) { /* bridge versi lama — lewati saja */ }
+    return '';
   }
 
   function installSection() {
@@ -217,10 +229,15 @@
       try {
         const r = await SAKU.ai.test();
         tres.className = 'hint ok';
-        tres.textContent = '✅ Terhubung via ' + r.via + ' (' + r.ms + ' ms)' + (r.sample ? ' · jawaban: "' + r.sample + '"' : '');
+        tres.innerHTML = '✅ Terhubung via ' + U.esc(r.via) + ' (' + r.ms + ' ms)' +
+          (r.transport ? ' · jalur: ' + U.esc(r.transport) : '') +
+          (r.sample ? ' · jawaban: "' + U.esc(r.sample) + '"' : '') +
+          (r.detail && r.detail.length > 1 ? '<br><span class="tag">' + r.detail.map(U.esc).join('<br>') + '</span>' : '');
       } catch (e) {
         tres.className = 'hint bad';
-        tres.textContent = '❌ Gagal: ' + ((e && e.message) || 'tidak diketahui') + '. Cek Base URL / API key / koneksi.';
+        const lines = (e && e.detail && e.detail.length) ? e.detail : [((e && e.message) || 'tidak diketahui')];
+        tres.innerHTML = '❌ Gagal menghubungi AI:<br>' + lines.map(U.esc).join('<br>') +
+          '<br>Cek koneksi internet, lalu (opsional) isi <strong>API Kustom</strong> di atas — Groq/OpenRouter/DeepSeek punya kunci gratis.';
       }
       tbtn.disabled = false;
     });

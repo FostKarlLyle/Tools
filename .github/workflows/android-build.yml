@@ -1,11 +1,12 @@
 name: Build Android APK
 
 # Build APK Saku (pembungkus Android + bubble maskot) di cloud.
-# Hasilnya bisa diunduh sebagai artifact "saku-apk" dari tab Actions.
+# Hasilnya bisa diunduh sebagai artifact "saku-apk" dari tab Actions,
+# dan otomatis terbit di GitHub Releases sebagai tag build-<nomor>.
 on:
   push:
     branches:
-      - arena/a4c77440-tools
+      - arena/27a0b54d-tools
     paths:
       - 'android/**'
       - '.github/workflows/android-build.yml'
@@ -40,8 +41,198 @@ jobs:
           unzip -q gradle.zip -d /opt
           /opt/gradle-8.7/bin/gradle --version
 
+      - name: Baca versi aplikasi
+        id: ver
+        run: |
+          VER=$(grep -oP "versionName '\K[^']+" android/app/build.gradle)
+          CODE=$(grep -oP "versionCode \K[0-9]+" android/app/build.gradle)
+          echo "name=$VER" >> "$GITHUB_OUTPUT"
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+          echo "Versi aplikasi: v$VER ($CODE)"
+
       - name: Build APK debug
         run: /opt/gradle-8.7/bin/gradle -p android assembleDebug --stacktrace --no-daemon
+
+      # Gagalkan build kalau aset web tidak benar-benar masuk ke dalam APK.
+      # Tujuannya: APK yang menampilkan "webpage not available" tidak pernah terbit
+      # sebagai rilis, dan penyebabnya kelihatan langsung di log.
+      - name: Verifikasi aset web di dalam APK
+        run: |
+          set -euo pipefail
+          APK=android/app/build/outputs/apk/debug/app-debug.apk
+          # Sprite maskot diperiksa sungguhan: latar harus transparan (keempat sudut
+          # alpha 0) dan tentu saja RGBA. Bug yang pernah lolos: mask pemotongan
+          # kepala/badan menimpa alpha sehingga sprite jadi persegi buram.
+          python3 - <<'PY'
+          import struct, zlib
+
+          def decode(path):
+              d = open(path, 'rb').read()
+              assert d[:8] == b'\x89PNG\r\n\x1a\n', 'bukan PNG'
+              pos, idat, ihdr = 8, b'', None
+              while pos < len(d):
+                  ln = struct.unpack('>I', d[pos:pos+4])[0]
+                  typ = d[pos+4:pos+8]
+                  data = d[pos+8:pos+8+ln]
+                  pos += 12 + ln
+                  if typ == b'IHDR': ihdr = data
+                  elif typ == b'IDAT': idat += data
+                  elif typ == b'IEND': break
+              w, h, bd, ct = struct.unpack('>IIBB', ihdr[:10])
+              assert bd == 8, 'kedalaman bit harus 8'
+              ch = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}.get(ct)
+              assert ch, 'tipe warna tidak didukung'
+              assert ct == 6, 'harus RGBA (tipe 6) supaya transparan'
+              raw, prev, out, i = zlib.decompress(idat), bytearray(w*ch), bytearray(), 0
+              stride = w*ch
+              for _ in range(h):
+                  f = raw[i]; i += 1
+                  line = bytearray(raw[i:i+stride]); i += stride
+                  if f == 1:
+                      for x in range(ch, stride): line[x] = (line[x] + line[x-ch]) & 255
+                  elif f == 2:
+                      for x in range(stride): line[x] = (line[x] + prev[x]) & 255
+                  elif f == 3:
+                      for x in range(stride):
+                          a = line[x-ch] if x >= ch else 0
+                          line[x] = (line[x] + ((a + prev[x]) >> 1)) & 255
+                  elif f == 4:
+                      for x in range(stride):
+                          a = line[x-ch] if x >= ch else 0
+                          b = prev[x]; c = prev[x-ch] if x >= ch else 0
+                          p = a + b - c
+                          pr = a if (abs(p-a) <= abs(p-b) and abs(p-a) <= abs(p-c)) else (b if abs(p-b) <= abs(p-c) else c)
+                          line[x] = (line[x] + pr) & 255
+                  out += line; prev = line
+              return w, h, out
+
+          need = ['mascot.png', 'mascot_head.png', 'mascot_body.png', 'mascot_happy.png', 'mascot_alert.png']
+          bad = []
+          for name in need:
+              p = 'android/app/src/main/res/drawable-nodpi/' + name
+              try:
+                  w, h, px = decode(p)
+              except Exception as e:
+                  bad.append(f'{name} ({e})')
+                  continue
+              def alpha(x, y):
+                  return px[(y*w + x)*4 + 3]
+              corners = [alpha(0,0), alpha(w-1,0), alpha(0,h-1), alpha(w-1,h-1)]
+              # baris/kolom terluar harus transparan penuh (margin untuk animasi)
+              edges = ([alpha(x, 0) for x in range(0, w, 5)] + [alpha(x, h-1) for x in range(0, w, 5)] +
+                       [alpha(0, y) for y in range(0, h, 5)] + [alpha(w-1, y) for y in range(0, h, 5)])
+              semi = sum(1 for y in range(0, h, 7) for x in range(0, w, 7) if alpha(x, y) == 0)
+              total = len(range(0, h, 7)) * len(range(0, w, 7))
+              print(f'{name}: {w}x{h} sudut_alpha={corners} tepi_maks_alpha={max(edges)} kosong={100*semi/total:.0f}%')
+              if max(corners) > 10:
+                  bad.append(f'{name} (sudut tidak transparan → latar akan terlihat sebagai kotak)')
+              if max(edges) > 10:
+                  bad.append(f'{name} (tepi tidak transparan → gerakan animasi akan terpotong)')
+              if semi == 0:
+                  bad.append(f'{name} (tidak ada piksel transparan sama sekali)')
+          # Pita alpha menengah = karakter tampak pudar. Regresi v1.0.7: fade 72%-88%
+          # menyisakan alpha 34-184 di bagian tubuh yang tidak tertutup awan.
+          def faded_runs(px, w, h):
+              runs, s, pp = [], None, None
+              for y in range(h):
+                  content = [px[(y*w+x)*4+3] for x in range(w) if px[(y*w+x)*4+3] > 0]
+                  if len(content) < 20:
+                      continue
+                  semi = sum(1 for a in content if 20 < a < 210)
+                  if semi / len(content) > 0.20:
+                      if s is None: s = pp = y
+                      elif y == pp + 1: pp = y
+                      else:
+                          runs.append((s, pp)); s = pp = y
+              if s is not None: runs.append((s, pp))
+              return [r for r in runs if r[1] - r[0] + 1 >= 6]
+
+          for name in need:
+              w, h, px = decode('android/app/src/main/res/drawable-nodpi/' + name)
+              runs = faded_runs(px, w, h)
+              if runs:
+                  bad.append(f'{name} (pita alpha menengah/pudar di baris {runs} — gunakan potongan keras, jangan alpha memudar)')
+
+          # Gabungan lapisan kepala + badan tidak boleh lebih tembus daripada sprite utuh.
+          w, h, full = decode('android/app/src/main/res/drawable-nodpi/mascot.png')
+          _, _, head = decode('android/app/src/main/res/drawable-nodpi/mascot_head.png')
+          _, _, body = decode('android/app/src/main/res/drawable-nodpi/mascot_body.png')
+          dim = 0
+          for y in range(h):
+              for x in range(w):
+                  i = (y*w + x)*4 + 3
+                  a, ah, ab = full[i]/255.0, head[i]/255.0, body[i]/255.0
+                  if ah + ab*(1-ah) < a - 0.02: dim += 1
+          print(f'lapisan kepala+badan: piksel lebih tembus dari aslinya = {dim}')
+          if dim:
+              bad.append(f'mascot_head/mascot_body membuat {dim} piksel tembus pandang (pudar)')
+
+          # Awan wajib menutup penuh bagian bawah karakter (pita sambungan + potongan).
+          # Geometri di bawah ini harus SAMA dengan CloudView.kt + BubbleService.kt.
+          def in_cloud(xs, ys):
+              view_w, view_h = 352.0*1.15, 472.0*0.50
+              vl, vt = (424.0 - view_w)/2.0, 472.0*0.70
+              bx, by = 0.06*view_w, 0.03*view_h
+              bw, bh = view_w*0.88, view_h*0.83
+              x, y = xs - vl, ys - vt
+              for cx, cy, r in [(0.50,0.16,0.19),(0.30,0.20,0.17),(0.70,0.20,0.17),
+                                (0.15,0.26,0.20),(0.85,0.26,0.20),
+                                (0.30,0.58,0.22),(0.70,0.58,0.22),(0.50,0.62,0.26)]:
+                  if (x-(bx+cx*bw))**2 + (y-(by+cy*bh))**2 <= (r*bh)**2:
+                      return True
+              ox, oy, orx, ory = 0.50, 0.36, 0.52, 0.30
+              return ((x-(bx+ox*bw))/(orx*bw))**2 + ((y-(by+oy*bh))/(ory*bh))**2 <= 1.0
+
+          for name in ['mascot.png', 'mascot_happy.png', 'mascot_alert.png']:
+              w, h, px = decode('android/app/src/main/res/drawable-nodpi/' + name)
+              exposed = [(y, x) for y in range(int(0.80*h), h, 2) for x in range(w)
+                         if px[(y*w+x)*4+3] > 0 and not in_cloud(x, y)]
+              print(f"{name}: piksel di luar awan (baris >= {int(0.80*h)}) = {len(exposed)}")
+              if exposed:
+                  bad.append(f'{name} menyembul {len(exposed)} piksel di luar awan {exposed[:2]} (awan kurang lebar/rendah)')
+
+          print('sprite maskot OK' if not bad else 'MASALAH: ' + ', '.join(bad))
+          raise SystemExit(1 if bad else 0)
+          PY
+          python3 - "$APK" > /tmp/apk-entries.txt <<'PY'
+          import sys, zipfile
+          with zipfile.ZipFile(sys.argv[1]) as z:
+              for n in sorted(z.namelist()):
+                  print(n)
+          PY
+          echo "=== aset aplikasi di dalam APK ==="
+          grep -E '^assets/' /tmp/apk-entries.txt || true
+          {
+            echo "### Isi \`assets/\` di dalam APK"
+            echo '```'
+            grep -E '^assets/' /tmp/apk-entries.txt || echo "(tidak ada folder assets)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          fail=0
+          for f in assets/saku/index.html \
+                   assets/saku/manifest.webmanifest \
+                   assets/saku/sw.js \
+                   assets/saku/styles/app.css \
+                   assets/saku/js/app.js \
+                   assets/saku/icons/icon-32.png; do
+            if grep -qx "$f" /tmp/apk-entries.txt; then
+              echo "OK    $f"
+            else
+              echo "::error::HILANG di dalam APK: $f"
+              fail=1
+            fi
+          done
+          # index.html harus benar-benar berisi aplikasi Saku (bukan file kosong)
+          python3 - "$APK" <<'PY'
+          import sys, zipfile
+          with zipfile.ZipFile(sys.argv[1]) as z:
+              info = z.getinfo('assets/saku/index.html')
+              data = z.read('assets/saku/index.html')
+          assert info.file_size > 500, 'assets/saku/index.html terlalu kecil'
+          assert b'Saku' in data, 'assets/saku/index.html bukan aplikasi Saku'
+          print('index.html di dalam APK:', info.file_size, 'byte')
+          PY
+          exit $fail
 
       - name: Upload APK (artifact "saku-apk")
         uses: actions/upload-artifact@v4
@@ -57,13 +248,44 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
-          name: Saku APK #${{ github.run_number }}
+          # tanda kutip wajib: tanpa itu YAML memotong teks setelah " #" sebagai komentar
+          name: "Saku APK v${{ steps.ver.outputs.name }} (build #${{ github.run_number }})"
           body: |
             📱 **Cara install:** unduh `saku-android.apk` di bawah → buka di HP → izinkan "install dari sumber tidak dikenal" → install.
 
             🔁 **Update:** kalau sudah pernah install versi bertanda tangan tetap, cukup timpa saja (data tidak hilang). Kalau baru pertama: install biasa.
 
             🫧 Aktifkan bubble maskot: buka Saku → Pengaturan → Bubble Maskot.
+
+            ---
+            **Versi aplikasi:** v${{ steps.ver.outputs.name }} (versionCode ${{ steps.ver.outputs.code }}) · commit `${{ github.sha }}`
+
+            Cara memastikan APK barunya benar terpasang: buka **Pengaturan → Bubble Maskot** di aplikasi (di situ tertulis "Versi aplikasi Android"), atau lihat **Setelan HP → Aplikasi → Saku**.
+
+            Aset web (PWA) ikut dipaket di dalam APK sebagai `assets/saku/` — aplikasi tetap jalan penuh tanpa internet untuk tugas & jadwal.
           files: saku-android.apk
           prerelease: true
           make_latest: true
+
+      # Laporan isi APK ditempel sebagai komentar commit supaya bisa diperiksa
+      # tanpa mengunduh APK/log Actions.
+      - name: Laporkan isi APK ke komentar commit
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          {
+            echo "### 🔎 Verifikasi isi APK build #${{ github.run_number }}"
+            echo
+            echo "APK dibangun dari commit \`${SHA:0:7}\` — versi v${{ steps.ver.outputs.name }}."
+            echo
+            echo '```'
+            grep -E '^assets/' /tmp/apk-entries.txt || echo "(tidak ada folder assets)"
+            echo '```'
+          } > /tmp/apk-report.md
+          gh api --method POST "repos/$REPO/commits/$SHA/comments" -f body="$(cat /tmp/apk-report.md)" > /dev/null
+          echo "Laporan verifikasi APK terkirim ke komentar commit."
